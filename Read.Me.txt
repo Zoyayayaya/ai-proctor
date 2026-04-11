@@ -1,0 +1,17 @@
+cv2 ---- (OpenCV): For video capture, image processing, and drawing on frames.
+
+mediapipe --- For facial landmark detection (FaceMesh), hand tracking (Hands), and pose estimation (Pose).
+
+numpy ---- For numerical operations, like calculating averages for smoothing.
+
+from collections import defaultdict ---- For creating dictionaries with default values (used for tracking states per person).
+it is used to simplify and streamline the management of per-person state data in CheatingDetector script, leveraging Python’s powerful defaultdict class to automatically provide default values (0, 0.0, or an empty list) for new keys. This makes the code more robust, readable, and adaptable to multiple people.
+
+import sys ---- For system-related tasks, like handling errors or file operations.
+
+import torch ---- The torch library is used to load and run the YOLO model for object detection. YOLO (You Only Look Once) is a popular object detection model, and the implementation relies on PyTorch, which is a deep learning framework.
+In the code, torch is used to load the YOLO model and perform inference on video frames to detect objects, specifically phones in this case.
+
+yolo5s.pt --- this model is used for object detection. In my code, for phone.
+
+YouTube link >> https://youtu.be/F4lrq6FZQLg?si=cax7inGGWxL2B8Fb
