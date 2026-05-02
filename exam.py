@@ -12,11 +12,11 @@ import threading
 import joblib
 
 # Constants
-EYE_LEFT_THRESHOLD = 0.3    # More sensitive to eye movement
-EYE_RIGHT_THRESHOLD = 0.7   # More sensitive to eye movement
-HEAD_TILT_THRESHOLD = 6    # More aggressive head tilt detection
+EYE_LEFT_THRESHOLD = 0.3    # Fixed value for looking left
+EYE_RIGHT_THRESHOLD = 0.7   # Fixed value for looking right
+HEAD_TILT_THRESHOLD = 10    # Pixels for head tilt detection
 TABLE_REGION_THRESHOLD = 0.7  # Hands in lower 30% of frame
-SHOULDER_TILT_THRESHOLD = 0.2  # More sensitive body tilt detection
+SHOULDER_TILT_THRESHOLD = 0.3  # Threshold for body tilt (used as a base, but adjusted by diff)
 LOOKING_UP_THRESHOLD = 0.25  # Nose in upper 25% of frame for looking up
 LOOK_AWAY_THRESHOLD = 15    # Frames to confirm looking away
 LOG_COOLDOWN = 2.0         # Seconds between logging events
@@ -344,7 +344,7 @@ class CheatingDetector:
             suspicious_count = 0
 
             # Ignore tiny eye jitter
-            if abs(eye_ratio - 0.5) > 0.15:
+            if abs(eye_ratio - 0.5) > 0.25:
                 suspicious_count += 1
                 self.look_away_counters[person_id] += 1
 
@@ -358,9 +358,9 @@ class CheatingDetector:
                 suspicious_count += 1
 
             # Only mark cheating if multiple signals
-            if suspicious_count >= 1:
+            if suspicious_count >= 2:
                 cheating = True
-                score += 25
+                score += 20
 
                 if (self.look_away_counters[person_id] >= LOOK_AWAY_THRESHOLD and 
                     not self.cheating_start_time[person_id]):

@@ -1,7 +1,7 @@
 {
-    "total_events": 19,
-    "total_cheating_events": 1,
-    "avg_score": 27.68421052631579,
-    "max_score": 51,
-    "duration_seconds": 35.01470160484314
+    "total_events": 192,
+    "total_cheating_events": 14,
+    "avg_score": 53.57692307692308,
+    "max_score": 88,
+    "duration_seconds": 223.08569073677063
 }
