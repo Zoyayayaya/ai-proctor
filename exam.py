@@ -12,9 +12,9 @@ import threading
 import joblib
 
 # Constants
-EYE_LEFT_THRESHOLD = 0.3    # Fixed value for looking left
-EYE_RIGHT_THRESHOLD = 0.7   # Fixed value for looking right
-HEAD_TILT_THRESHOLD = 10    # Pixels for head tilt detection
+EYE_LEFT_THRESHOLD = 0.3    
+EYE_RIGHT_THRESHOLD = 0.7   
+HEAD_TILT_THRESHOLD = 10    
 TABLE_REGION_THRESHOLD = 0.7  # Hands in lower 30% of frame
 SHOULDER_TILT_THRESHOLD = 0.3  # Threshold for body tilt (used as a base, but adjusted by diff)
 LOOKING_UP_THRESHOLD = 0.25  # Nose in upper 25% of frame for looking up
