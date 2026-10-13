@@ -1,0 +1,42 @@
+[project]
+name = "zoya-proctoring"
+version = "0.2.0"
+description = "AI-based multimodal online exam proctoring system with hybrid learning and affective avatar feedback"
+readme = "Read.Me.txt"
+requires-python = ">=3.11,<3.12"
+
+# Base environment: everything needed for evaluation and figure generation.
+# Deliberately light so the results pipeline runs without pulling in torch.
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+# Heavy detector stack. Needed only by scripts/extract_features.py, which runs
+# MediaPipe + YOLOv5 over the recorded clips to produce the labelled dataset.
+#
+# mediapipe is pinned to the last release that still ships the legacy
+# `mp.solutions` API. exam.py is written against that API, and MediaPipe removed
+# it somewhere between 0.10.21 and 0.10.31 - so exam.py cannot run against any
+# currently-default mediapipe. Pinning keeps the offline extractor on exactly
+# the same API as the live system instead of silently diverging from it.
+# Verified boundary: 0.10.21 has mp.solutions, 0.10.31 does not.
+detect = [
+    "opencv-python>=4.8",
+    "mediapipe==0.10.21",
+    "ultralytics>=8.0",
+    "joblib>=1.3",
+    "flask>=3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pillow>=12.3.0",
+    "pytest>=8.0",
+]
+
+[tool.uv]
+package = false

@@ -1,5 +1,9 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 .env
 node_modules/
+
+# recorded clips are large; keep them out of git
+data/clips/
