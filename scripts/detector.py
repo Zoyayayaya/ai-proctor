@@ -89,13 +89,10 @@ from collections import deque
 os.environ.setdefault("GLOG_minloglevel", "2")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
-from rule_score import (LOOKING_UP_THRESHOLD, SHOULDER_TILT_THRESHOLD,  # noqa: E402
-                        TABLE_REGION_THRESHOLD, HEAD_TILT_THRESHOLD)
-
-PHONE_CLASS_ID = 67
-PHONE_CONF = 0.1
-SHOULDER_WINDOW = 10
-SHOULDER_LANDMARK_ERROR = 0.6
+from rule_score import (HEAD_TILT_THRESHOLD, LOOKING_UP_THRESHOLD,  # noqa: E402
+                        PHONE_CLASS_ID, PHONE_CONF, SHOULDER_LANDMARK_ERROR,
+                        SHOULDER_LEVEL_MAX_DIFF, SHOULDER_TILT_THRESHOLD,
+                        SHOULDER_WINDOW, TABLE_REGION_THRESHOLD)
 
 FEATURE_KEYS = ("eye_ratio", "head_tilt", "body_tilt", "looking_up",
                 "hand_on_table", "phone_detected")
@@ -241,7 +238,7 @@ class Detector:
                 al = sum(s[0] for s in self._shoulder) / len(self._shoulder)
                 ar = sum(s[1] for s in self._shoulder) / len(self._shoulder)
                 d = abs(al - ar)
-                if d <= SHOULDER_LANDMARK_ERROR and d < 0.35 and (
+                if d <= SHOULDER_LANDMARK_ERROR and d < SHOULDER_LEVEL_MAX_DIFF and (
                         al > ar + SHOULDER_TILT_THRESHOLD
                         or ar > al + SHOULDER_TILT_THRESHOLD):
                     tilt = 1

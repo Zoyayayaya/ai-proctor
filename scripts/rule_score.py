@@ -38,6 +38,17 @@ SMOOTHING_WINDOW = 10       # k, the moving-average window
 RULE_DECISION_THRESHOLD = 60
 SAFE_ZONE = 20              # below this, cheating is forced to False
 
+# ---------------------------------------------------------------------------
+# Detector-level constants. These were inline in exam.py and then copied into
+# several scripts, which is a drift risk: change one and the offline and live
+# paths silently disagree. They live here now and everything imports them.
+# ---------------------------------------------------------------------------
+PHONE_CLASS_ID = 67             # COCO class id for cell phone
+PHONE_CONF = 0.1                # exam.py: conf > 0.1
+SHOULDER_WINDOW = 10            # frames averaged for shoulder smoothing
+SHOULDER_LANDMARK_ERROR = 0.6   # above this the shoulder solve is a landmark error
+SHOULDER_LEVEL_MAX_DIFF = 0.35  # below this the shoulders are level enough to test
+
 # The seven features the classifier consumes (paper Table 4 / train_model.py)
 ML_FEATURES = [
     "eye_ratio",

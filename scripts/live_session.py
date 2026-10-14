@@ -77,8 +77,6 @@ import rule_score as rs  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 OUTDIR = ROOT / "data" / "sessions"
 
-PHONE_CLASS_ID = 67
-PHONE_CONF = 0.1
 
 INK = (26, 26, 26)
 GREEN = (90, 190, 90)

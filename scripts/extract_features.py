@@ -50,10 +50,9 @@ SCENARIO_LABELS = {
     "S7": 1,  # out of frame
 }
 
-PHONE_CLASS_ID = 67          # COCO class id for cell phone
-PHONE_CONF_THRESHOLD = 0.1   # exam.py: conf > 0.1
-SHOULDER_SMOOTH = 10         # exam.py keeps the last 10 shoulder samples
-SHOULDER_LANDMARK_ERROR = 0.6
+from rule_score import (PHONE_CLASS_ID, PHONE_CONF,  # noqa: E402
+                        SHOULDER_LANDMARK_ERROR, SHOULDER_LEVEL_MAX_DIFF,
+                        SHOULDER_WINDOW)
 
 FNAME = re.compile(r"^(S[1-7])_p(\d+)_r(\d+)$")
 
@@ -149,12 +148,12 @@ def process_clip(path: Path, fm, hands, pose, yolo, stride: int = 1) -> list[dic
             ls = pl.landmark[11]  # LEFT_SHOULDER
             rsh = pl.landmark[12]  # RIGHT_SHOULDER
             shoulder_hist.append((ls.x, rsh.x))
-            if len(shoulder_hist) > SHOULDER_SMOOTH:
+            if len(shoulder_hist) > SHOULDER_WINDOW:
                 shoulder_hist.pop(0)
             avg_l = float(np.mean([s[0] for s in shoulder_hist]))
             avg_r = float(np.mean([s[1] for s in shoulder_hist]))
             diff = abs(avg_l - avg_r)
-            if diff <= SHOULDER_LANDMARK_ERROR and diff < 0.35:
+            if diff <= SHOULDER_LANDMARK_ERROR and diff < SHOULDER_LEVEL_MAX_DIFF:
                 if avg_l > avg_r + rs.SHOULDER_TILT_THRESHOLD:
                     body_tilt = 1
                 elif avg_r > avg_l + rs.SHOULDER_TILT_THRESHOLD:
@@ -166,7 +165,7 @@ def process_clip(path: Path, fm, hands, pose, yolo, stride: int = 1) -> list[dic
         for r in yolo_res:
             for b in r.boxes:
                 if (int(b.cls[0]) == PHONE_CLASS_ID
-                        and float(b.conf[0]) > PHONE_CONF_THRESHOLD):
+                        and float(b.conf[0]) > PHONE_CONF):
                     phone_detected = 1
 
         # duration accrues only while a suspicious state holds (exam.py logic)

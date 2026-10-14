@@ -47,7 +47,8 @@ import numpy as np  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rule_score as rs  # noqa: E402
-from detector import PHONE_CLASS_ID, PHONE_CONF  # noqa: E402
+from rule_score import (PHONE_CLASS_ID, PHONE_CONF,  # noqa: E402
+                        SHOULDER_LANDMARK_ERROR, SHOULDER_LEVEL_MAX_DIFF)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -161,6 +162,12 @@ def main():
     ap.add_argument("--no-pose", action="store_true", help="skip body pose")
     ap.add_argument("--annotate", action="store_true",
                     help="also write an annotated video with the angles drawn")
+    ap.add_argument("--mesh", action="store_true",
+                    help="write mesh_check.mp4: the face mesh at low opacity, the "
+                         "6 PnP landmarks highlighted, and the solved pose axes - "
+                         "so the head pose can be verified by eye")
+    ap.add_argument("--mesh-opacity", type=float, default=0.32,
+                    help="opacity of the mesh overlay (0-1)")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--imgsz", type=int, default=320)
     args = ap.parse_args()
@@ -207,6 +214,15 @@ def main():
     if args.annotate:
         writer = cv2.VideoWriter(str(out / "annotated.mp4"),
                                  cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    mesh_writer = None
+    if args.mesh:
+        mesh_writer = cv2.VideoWriter(str(out / "mesh_check.mp4"),
+                                      cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+        draw_utils = mp.solutions.drawing_utils
+        draw_styles = mp.solutions.drawing_styles
+        cam_mesh = np.array([[float(w), 0, w / 2.0], [0, float(w), h / 2.0],
+                             [0, 0, 1]], dtype=np.float64)
+        dist_mesh = np.zeros((4, 1))
 
     recs = []
     idx = 0
@@ -228,6 +244,7 @@ def main():
                  phone_detected=0, pitch=None, yaw=None, roll=None, pnp_err=None)
 
         res = fm.process(rgb)
+        face_lm = res.multi_face_landmarks[0] if res.multi_face_landmarks else None
         if res.multi_face_landmarks:
             lm = res.multi_face_landmarks[0].landmark
 
@@ -260,7 +277,7 @@ def main():
                 al = sum(s[0] for s in shoulder) / len(shoulder)
                 ar = sum(s[1] for s in shoulder) / len(shoulder)
                 d = abs(al - ar)
-                if d <= 0.6 and d < 0.35 and (
+                if d <= SHOULDER_LANDMARK_ERROR and d < SHOULDER_LEVEL_MAX_DIFF and (
                         al > ar + rs.SHOULDER_TILT_THRESHOLD
                         or ar > al + rs.SHOULDER_TILT_THRESHOLD):
                     r["body_tilt"] = 1
@@ -276,6 +293,38 @@ def main():
             + int(r["head_tilt"] is not None and r["head_tilt"] > rs.HEAD_TILT_THRESHOLD)
             + int(bool(r["body_tilt"])) + int(bool(r["looking_up"])))
         recs.append(r)
+
+        # ---- mesh verification frame -------------------------------------
+        # Draws what the head-pose solve actually sees: the mesh at low opacity,
+        # the six landmarks that drive the PnP highlighted, and the solved pose
+        # axes. If the axes track the head correctly, the angles are right.
+        if mesh_writer is not None:
+            m = frame.copy()
+            if face_lm is not None:
+                draw_utils.draw_landmarks(
+                    m, face_lm, mp.solutions.face_mesh.FACEMESH_TESSELATION,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=draw_styles.get_default_face_mesh_tesselation_style())
+                m = cv2.addWeighted(m, args.mesh_opacity, frame,
+                                    1.0 - args.mesh_opacity, 0)
+                for lid in LANDMARK_IDS:
+                    c = (int(face_lm.landmark[lid].x * w), int(face_lm.landmark[lid].y * h))
+                    cv2.circle(m, c, 5, (0, 0, 255), -1)
+                    cv2.circle(m, c, 7, (255, 255, 255), 1)
+                txt = (f"pitch {r['pitch']:+.1f}  yaw {r['yaw']:+.1f}  "
+                       f"roll {r['roll']:+.1f}   err {r['pnp_err']:.1f}px"
+                       if r["pitch"] is not None else "pose solve rejected")
+                if r["pitch"] is not None and pose_prev is not None:
+                    cv2.drawFrameAxes(m, cam_mesh, dist_mesh,
+                                      pose_prev[0], pose_prev[1], 80.0, 3)
+                cv2.putText(m, txt, (14, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.62, (255, 255, 255), 3)
+                cv2.putText(m, txt, (14, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.62, (20, 20, 20), 1)
+            else:
+                cv2.putText(m, "no face", (14, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.62, (0, 0, 255), 2)
+            mesh_writer.write(m)
 
         if writer is not None:
             a = frame.copy()
@@ -293,12 +342,10 @@ def main():
         ps.close()
     if writer:
         writer.release()
+    if mesh_writer:
+        mesh_writer.release()
 
     # ---- outputs ---------------------------------------------------------
-    with open(out / "frames.jsonl", "w", encoding="utf-8") as fh:
-        for r in recs:
-            fh.write(json.dumps(r) + "\n")
-
     def stats(key, only_face=True):
         vals = [r[key] for r in recs
                 if r[key] is not None and (not only_face or r["face"])]
@@ -345,6 +392,12 @@ def main():
                                 "roll_dev", "pnp_err")},
                    indicator_fires={k: sum(1 for r in recs if r[k]) for k in FEATURES},
                    suspicious_ge2=sum(1 for r in recs if r["suspicious_count"] >= 2))
+    # frames.jsonl is written AFTER the baseline-relative fields are computed,
+    # so the file contains the trustworthy deviations and not just raw angles
+    with open(out / "frames.jsonl", "w", encoding="utf-8") as fh:
+        for r in recs:
+            fh.write(json.dumps(r) + "\n")
+
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     print("=" * 76)

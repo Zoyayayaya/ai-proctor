@@ -39,6 +39,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rule_score as rs  # noqa: E402
+from rule_score import PHONE_CLASS_ID, PHONE_CONF  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIPS_DIR = ROOT / "data" / "clips"
@@ -46,8 +47,6 @@ CLIPS_DIR = ROOT / "data" / "clips"
 # mirrors exam.py
 CAM_INDEX = 0
 WIDTH, HEIGHT = 1280, 720
-PHONE_CLASS_ID = 67
-PHONE_CONF = 0.1
 
 SCENARIOS = {
     "S1": ("Focused on screen", 0,
