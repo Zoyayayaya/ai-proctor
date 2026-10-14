@@ -138,7 +138,33 @@ def decrypt(envelope: dict, key_material: str) -> dict:
     return json.loads(pt.decode("utf-8"))
 
 
+def _load_env() -> None:
+    """
+    Pull PROCTOR_TELEMETRY_KEY out of .env if it is there.
+
+    Without this, decrypting would need the variable exported by hand every
+    time, even though the sender read it from .env automatically. The asymmetry
+    was confusing in practice, so both sides read the same file.
+    """
+    try:
+        from pathlib import Path as _P
+        f = _P(__file__).resolve().parent.parent / ".env"
+        if not f.exists():
+            return
+        for line in f.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            if k and k not in os.environ:
+                os.environ[k] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+
+
 def resolve_key(explicit: str | None = None) -> str:
+    _load_env()
     return explicit or os.environ.get(ENV_KEY) or ""
 
 

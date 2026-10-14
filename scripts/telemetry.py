@@ -544,7 +544,15 @@ def install_error_reporter(where: str, enabled: bool = True, **kw):
 
 
 def resolve_key(explicit: str | None = None) -> str:
-    """The shared encryption key: explicit argument, then the environment."""
+    """
+    The shared encryption key: explicit argument, then the environment.
+
+    Loads .env first. Without that, a caller which did not happen to call
+    ensure_configured() saw no key and silently sent in the clear - which is
+    exactly what happened to the agent's own reports before this was fixed.
+    Every caller now reads the same file.
+    """
+    load_env_file()
     return explicit or os.environ.get(ENV_KEY) or ""
 
 
