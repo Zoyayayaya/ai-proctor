@@ -53,15 +53,72 @@ Open **PowerShell** (not cmd). Run these in order.
 
 ### 2.1 Install uv
 
+`uv` manages Python and the packages, so **Python does not need to be installed
+first**. There are three ways; pick one.
+
+#### Option A — the official standalone installer (recommended)
+
+No prerequisites, no admin rights. Open **PowerShell** and run:
+
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Close and reopen PowerShell so the new `PATH` takes effect, then confirm:
+The `-ExecutionPolicy ByPass` part is what permits running a script downloaded
+from the internet; Windows blocks it otherwise. It installs into
+`%USERPROFILE%\.local\bin`.
+
+**Then close PowerShell and open it again.** That refreshes `PATH`; without it
+`uv` appears to be missing.
+
+To read the script before running it:
+
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | more"
+```
+
+#### Option B — WinGet
+
+WinGet ships with modern Windows:
+
+```powershell
+winget install --id=astral-sh.uv -e
+```
+
+#### Option C — Scoop
+
+```powershell
+scoop install main/uv
+```
+
+#### Confirm it worked
+
+In a **new** PowerShell window:
 
 ```powershell
 uv --version
 ```
+
+Expect something like `uv 0.13.1 (...)`. If the command is not recognised, see
+the table below.
+
+#### Notes worth knowing
+
+| | |
+|---|---|
+| Updating | `uv self update` — **only works for Option A**. With WinGet or Scoop, update with that tool. |
+| Behind a proxy | The installer fetches from `astral.sh` and `github.com`. Set `https_proxy` if you use one, or download a binary from uv's GitHub releases and add it to `PATH`. |
+| **Not inside WSL** | WSL is Linux with its own `PATH`, so a Windows-side install never appears there. Inside WSL run `curl -LsSf https://astral.sh/uv/install.sh \| sh` instead. |
+| Uninstalling | Delete `%USERPROFILE%\.local\bin\uv.exe` and `uvx.exe`. |
+
+#### If `uv` is not recognised after installing
+
+| Symptom | Fix |
+|---|---|
+| `uv : The term 'uv' is not recognized` | PowerShell has not been restarted. Close **every** window and open a fresh one — `PATH` is read at startup. |
+| Still not recognised after restarting | The install directory is not on `PATH`. For this session: `$env:Path += ";$HOME\.local\bin"`. Permanently: *System Properties → Environment Variables → Path*. |
+| `... cannot be loaded because running scripts is disabled` | The `-ExecutionPolicy ByPass` flag was missed. Re-run the full Option A command. |
+| A very old version reports itself | Another tool may have installed uv earlier. Run `uv self update`. |
 
 ### 2.2 Install Python 3.11 through uv
 

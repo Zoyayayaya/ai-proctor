@@ -409,4 +409,10 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys as _sys
+    try:
+        import telemetry as _t
+        _t.install_error_reporter("eval", enabled="--no-telemetry" not in _sys.argv)
+    except Exception:
+        pass
     raise SystemExit(main())

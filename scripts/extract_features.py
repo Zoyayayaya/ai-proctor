@@ -50,6 +50,7 @@ SCENARIO_LABELS = {
     "S7": 1,  # out of frame
 }
 
+import telemetry  # noqa: E402
 from rule_score import (PHONE_CLASS_ID, PHONE_CONF,  # noqa: E402
                         SHOULDER_LANDMARK_ERROR, SHOULDER_LEVEL_MAX_DIFF,
                         SHOULDER_WINDOW)
@@ -164,12 +165,21 @@ def main():
     ap.add_argument("--stride-pose", type=int, default=1)
     ap.add_argument("--stride-phone", type=int, default=1,
                     help="1 = check for a phone on every frame (offline default)")
+    ap.add_argument("--no-telemetry", action="store_true",
+                    help="do not report progress or failures")
+    ap.add_argument("--run-label", default="")
     args = ap.parse_args()
 
     clips_dir = Path(args.clips)
     if not clips_dir.is_dir():
-        print(f"error: {clips_dir} not found. Record the clips first - see "
-              f"RECORDING_PROTOCOL.md in the paper folder.", file=sys.stderr)
+        msg = f"clips folder not found: {clips_dir}"
+        print(f"error: {msg}", file=sys.stderr)
+        print("  Record the clips first - see RECORDING_SPEC.md.", file=sys.stderr)
+        telemetry.report_error("extract_features.no_clips",
+                               FileNotFoundError(msg),
+                               {"clips_dir": str(clips_dir)},
+                               run_label=args.run_label,
+                               enabled=not args.no_telemetry)
         return 1
 
     vids = [p for p in sorted(clips_dir.iterdir())
@@ -183,10 +193,20 @@ def main():
             print("   ", p.name)
     if not good:
         print("error: no usable clips found.", file=sys.stderr)
+        telemetry.report_error(
+            "extract_features.no_usable_clips", ValueError("no usable clips"),
+            {"clips_dir": str(clips_dir), "video_files_seen": len(vids),
+             "rejected_names": [p.name for p in bad][:20]},
+            run_label=args.run_label, enabled=not args.no_telemetry)
         return 1
 
     print(f"processing {len(good)} clips "
           f"(video stride={args.stride}, detector imgsz={args.imgsz}) ...")
+    telemetry.report("extract_started",
+                     {"clips": len(good), "video_stride": args.stride,
+                      "imgsz": args.imgsz},
+                     run_label=args.run_label,
+                     enabled=not args.no_telemetry)
     det = build_detector(args.device, args.imgsz, args.half,
                          {"face": args.stride_face, "hands": args.stride_hands,
                           "pose": args.stride_pose, "phone": args.stride_phone})
@@ -195,9 +215,24 @@ def main():
 
     all_rows = []
     for i, p in enumerate(good, 1):
-        rows = process_clip(p, det, stride=args.stride)
+        try:
+            rows = process_clip(p, det, stride=args.stride)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [{i}/{len(good)}] {p.name:22} -> FAILED ({type(e).__name__})")
+            telemetry.report_error("extract_features.process_clip", e,
+                                   {"clip": p.name, "index": i,
+                                    "of": len(good)},
+                                   run_label=args.run_label,
+                                   enabled=not args.no_telemetry)
+            continue
         all_rows.extend(rows)
         print(f"  [{i}/{len(good)}] {p.name:22} -> {len(rows):4d} frames")
+        if i % 5 == 0 or i == len(good):
+            telemetry.report("extract_progress",
+                             {"done": i, "of": len(good),
+                              "frames_so_far": len(all_rows)},
+                             run_label=args.run_label,
+                             enabled=not args.no_telemetry)
 
     df = pd.DataFrame(all_rows)
     out = Path(args.out)
@@ -212,9 +247,22 @@ def main():
     print()
     print(det.report())
     det.close()
+
+    telemetry.report("extract_finished",
+                     {"clips": int(df["clip_id"].nunique()),
+                      "frames": len(df),
+                      "sessions": int(df["session_id"].nunique()),
+                      "class_balance": {str(k): int(v) for k, v in
+                                        df["label"].value_counts().sort_index().items()},
+                      "phone_positive_frames": int(df["phone_detected"].sum()),
+                      "device": det.device, "imgsz": det.imgsz},
+                     run_label=args.run_label,
+                     enabled=not args.no_telemetry)
     print("\nnext: uv run python scripts/eval.py")
     return 0
 
 
 if __name__ == "__main__":
+    telemetry.install_error_reporter(
+        "extract_features", enabled="--no-telemetry" not in sys.argv)
     raise SystemExit(main())

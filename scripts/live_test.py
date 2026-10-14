@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rule_score as rs  # noqa: E402
 from rule_score import PHONE_CLASS_ID, PHONE_CONF  # noqa: E402
 from sysutil import open_camera, open_writer  # noqa: E402
+import telemetry  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIPS_DIR = ROOT / "data" / "clips"
@@ -277,6 +278,16 @@ def record(args):
           f"{CLIP_SECONDS:.0f}s each.\n")
     print("Follow the prompts. Hold the behaviour for at least "
           f"{HOLD_ADVICE:.0f}s in the middle of each clip.\n")
+    print("Progress is reported after every clip, so whoever is watching the")
+    print("other end can see the session advancing rather than waiting blind.\n")
+
+    done_before = 24 - len(todo)
+    telemetry.report("recording_started",
+                     {"person": args.person, "clips_to_record": len(todo),
+                      "clips_already_present": done_before,
+                      "scenarios": sorted(SCENARIOS)},
+                     session=f"p{args.person}", run_label=args.run_label,
+                     enabled=not args.no_telemetry)
     try:
         for i, (code, rep, path) in enumerate(todo, 1):
             name, label, instr = SCENARIOS[code]
@@ -305,12 +316,40 @@ def record(args):
                 vw.write(frame)
                 written += 1
             vw.release()
-            print(f"  done - {written} frames, {time.time()-t0:.1f}s -> {path.name}\n")
+            elapsed_s = time.time() - t0
+            print(f"  done - {written} frames, {elapsed_s:.1f}s -> {path.name}")
+            print(f"  progress reported: {i}/{len(todo)} clips this session\n")
+
+            telemetry.report(
+                "clip_recorded",
+                {"person": args.person, "scenario": code, "repeat": rep,
+                 "scenario_name": name, "label": "cheating" if label else "safe",
+                 "filename": path.name, "frames": written,
+                 "seconds": round(elapsed_s, 1),
+                 "progress": f"{i}/{len(todo)}",
+                 "total_for_person": 24},
+                session=f"p{args.person}", run_label=args.run_label,
+                enabled=not args.no_telemetry)
     except KeyboardInterrupt:
         print("\n  aborted")
+        telemetry.report("recording_aborted",
+                         {"person": args.person, "recorded_so_far": len(todo)},
+                         session=f"p{args.person}", run_label=args.run_label,
+                         enabled=not args.no_telemetry)
         return 1
+    except Exception as e:  # noqa: BLE001
+        telemetry.report_error("live_test.record", e,
+                               {"person": args.person},
+                               session=f"p{args.person}",
+                               enabled=not args.no_telemetry)
+        raise
     finally:
         cap.release()
+
+    telemetry.report("recording_finished",
+                     {"person": args.person, "clips_recorded": len(todo)},
+                     session=f"p{args.person}", run_label=args.run_label,
+                     enabled=not args.no_telemetry)
 
     print("=" * 72)
     print(f"recorded {len(todo)} clips into {CLIPS_DIR}")
@@ -329,7 +368,13 @@ def main():
                     help="skip clips that already exist")
     ap.add_argument("--seconds", type=float, default=20.0, help="live test duration")
     ap.add_argument("--show", action="store_true", help="also open a preview window")
+    ap.add_argument("--no-telemetry", action="store_true",
+                    help="do not report progress or failures")
+    ap.add_argument("--run-label", default="", help="label for this run")
     args = ap.parse_args()
+    telemetry.install_error_reporter(
+        "live_test", enabled=not args.no_telemetry,
+        run_label=args.run_label)
     return record(args) if args.record else live_test(args)
 
 

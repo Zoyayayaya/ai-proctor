@@ -446,6 +446,103 @@ def encrypt_for_send(payload: dict, quiet: bool = False) -> dict:
         return payload
 
 
+# ---------------------------------------------------------------------------
+# Progress and failure events
+#
+# The final results POST tells you a run finished. These tell you it is
+# happening: one small encrypted event per recorded clip, per check, per stage,
+# and per failure. Without them a long unattended run is a black box until the
+# very end, and a crash produces nothing at all.
+#
+# Same transport, same encryption, same best-effort behaviour. A failed event
+# never interrupts the work.
+# ---------------------------------------------------------------------------
+EVENT_SCHEMA = "proctor.event/1"
+
+
+def build_event(event: str, detail: dict | None = None, session: str = "",
+                run_label: str = "") -> dict:
+    return {
+        "schema": EVENT_SCHEMA,
+        "event": event,
+        "run_id": f"{int(time.time())}-{uuid.uuid4().hex[:8]}",
+        "run_label": run_label,
+        "session": session,
+        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "source": f"{Path(sys.argv[0]).name}",
+        "environment": environment(),
+        "detail": detail or {},
+    }
+
+
+def send_event(event: str, detail: dict | None = None, session: str = "",
+               run_label: str = "", url: str | None = None,
+               enabled: bool = True, dry_run: bool = False,
+               allow_http: bool = False, quiet: bool = True) -> dict:
+    """
+    POST a small progress or failure event. Never raises, never blocks long.
+
+    quiet by default: these fire often and should not clutter the console. The
+    final results POST is the one that prints.
+    """
+    if not enabled:
+        return {"sent": False, "status": None, "detail": "disabled"}
+    u, t = resolve(url, None)
+    if not u:
+        return {"sent": False, "status": None, "detail": "no endpoint"}
+    payload = encrypt_for_send(build_event(event, detail, session, run_label),
+                              quiet=True)
+    return send(payload, u, t, dry_run=dry_run, allow_http=allow_http, quiet=quiet)
+
+
+def report(event: str, detail: dict | None = None, **kw) -> dict:
+    """
+    send_event, but swallows every error.
+
+    Call this from anywhere. It is deliberately impossible for reporting to
+    break the thing it is reporting on.
+    """
+    try:
+        return send_event(event, detail, **kw)
+    except Exception:
+        return {"sent": False, "status": None, "detail": "reporting failed"}
+
+
+def report_error(where: str, exc: BaseException | None = None,
+                 detail: dict | None = None, **kw) -> dict:
+    """Report a failure with enough context to act on it."""
+    import traceback
+    d = dict(detail or {})
+    d["where"] = where
+    if exc is not None:
+        d["error_type"] = type(exc).__name__
+        d["error"] = str(exc)[:600]
+        tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        d["traceback_tail"] = "".join(tb)[-1200:]
+    return report("error", d, **kw)
+
+
+def install_error_reporter(where: str, enabled: bool = True, **kw):
+    """
+    Make uncaught exceptions report themselves before the process dies.
+
+    An unattended run that crashes should still tell us why. This chains the
+    previous excepthook so normal traceback printing is unaffected.
+    """
+    if not enabled:
+        return
+    previous = sys.excepthook
+
+    def hook(exc_type, exc, tb):
+        try:
+            report_error(where, exc, kw)
+        except Exception:
+            pass
+        previous(exc_type, exc, tb)
+
+    sys.excepthook = hook
+
+
 def resolve_key(explicit: str | None = None) -> str:
     """The shared encryption key: explicit argument, then the environment."""
     return explicit or os.environ.get(ENV_KEY) or ""

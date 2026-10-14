@@ -34,6 +34,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rule_score as rs  # noqa: E402
+import telemetry  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CLIPS = ROOT / "data" / "clips"
@@ -129,18 +130,28 @@ def main():
                     help="sample every Nth frame (default 5; lower is slower)")
     ap.add_argument("--people", default="",
                     help="comma-separated person ids to expect, e.g. 1,2")
+    ap.add_argument("--no-telemetry", action="store_true",
+                    help="do not report the result or failures")
     args = ap.parse_args()
 
     clips_dir = Path(args.clips)
     if not clips_dir.is_dir():
         print(f"error: {clips_dir} not found.")
         print("  Record the clips per RECORDING_SPEC.md, then put them here.")
+        telemetry.report_error("check_clips.no_clips",
+                               FileNotFoundError(str(clips_dir)),
+                               {"clips_dir": str(clips_dir)},
+                               enabled=not args.no_telemetry)
         return 1
 
     vids = sorted(p for p in clips_dir.iterdir()
                   if p.is_file() and p.suffix.lower() in VIDEO_EXT)
     if not vids:
         print(f"error: no video files in {clips_dir}")
+        telemetry.report_error("check_clips.no_videos",
+                               ValueError("no video files"),
+                               {"clips_dir": str(clips_dir)},
+                               enabled=not args.no_telemetry)
         return 1
 
     print(f"checking {len(vids)} clips in {clips_dir}  (stride={args.stride})\n")
@@ -256,8 +267,28 @@ def main():
     print("RESULT:", "PASS - the clips are ready to process" if ok
           else "FAIL - fix the items marked above, then re-run this check")
     print("=" * 96)
+
+    # Report the verdict. A FAIL matters more than a PASS here: it means
+    # someone has to re-record, and knowing that early is the whole point.
+    telemetry.report(
+        "clip_check",
+        {"passed": ok, "clips_checked": len(vids),
+         "problems": {"bad_names": bad_names[:8], "missing": missing[:8],
+                      "low_resolution": low_res[:8], "too_short": short[:8],
+                      "low_face_fraction": low_face[:8],
+                      "noisy_safe_clips": noisy_safe[:8],
+                      "weak_cheating_clips": weak_cheat[:8]},
+         "counts": {"bad_names": len(bad_names), "missing": len(missing),
+                    "low_resolution": len(low_res), "too_short": len(short),
+                    "low_face_fraction": len(low_face),
+                    "noisy_safe_clips": len(noisy_safe),
+                    "weak_cheating_clips": len(weak_cheat)}},
+        enabled=not args.no_telemetry)
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
+    import argparse as _ap
+    _no = "--no-telemetry" in sys.argv
+    telemetry.install_error_reporter("check_clips", enabled=not _no)
     raise SystemExit(main())
