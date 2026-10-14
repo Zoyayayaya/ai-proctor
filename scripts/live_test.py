@@ -40,6 +40,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rule_score as rs  # noqa: E402
 from rule_score import PHONE_CLASS_ID, PHONE_CONF  # noqa: E402
+from sysutil import open_camera, open_writer  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIPS_DIR = ROOT / "data" / "clips"
@@ -70,21 +71,6 @@ CLIP_SECONDS = 12.0
 HOLD_ADVICE = 6.0
 
 
-def open_camera():
-    import cv2
-    cap = cv2.VideoCapture(CAM_INDEX)
-    if not cap.isOpened():
-        print("\n  Could not open the camera.\n")
-        print("  On macOS this is almost always a permission issue, not a code one:")
-        print("    System Settings > Privacy & Security > Camera")
-        print("    -> enable the app you launched this from (iTerm / Terminal / opencode)")
-        print("    -> fully quit and reopen that app, then try again")
-        print()
-        print("  OpenCV's own message if so is: \"not authorized to capture video\".")
-        return None
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
-    return cap
 
 
 def build_detectors():
@@ -171,7 +157,7 @@ def annotate(frame, f, score, decision):
 
 # --------------------------------------------------------------------------
 def live_test(args):
-    cap = open_camera()
+    cap = open_camera(CAM_INDEX, WIDTH, HEIGHT, 15.0)
     if cap is None:
         return 1
     fm, hd, ps, yolo = build_detectors()
@@ -271,11 +257,11 @@ def live_test(args):
 # --------------------------------------------------------------------------
 def record(args):
     import cv2
-    cap = open_camera()
+    cap = open_camera(CAM_INDEX, WIDTH, HEIGHT, 15.0)
     if cap is None:
         return 1
     CLIPS_DIR.mkdir(parents=True, exist_ok=True)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    # codec chosen by sysutil.open_writer with a fallback chain
     todo = []
     for code, (name, _lab, _instr) in SCENARIOS.items():
         for rep in (1, 2, 3):
@@ -306,8 +292,8 @@ def record(args):
                 time.sleep(1)
             print(" RECORDING")
 
-            vw = cv2.VideoWriter(str(path), fourcc, 15.0, (WIDTH, HEIGHT))
-            if not vw.isOpened():
+            vw, _codec = open_writer(path, 15.0, (WIDTH, HEIGHT))
+            if vw is None:
                 print(f"  !! could not open a writer for {path}")
                 return 1
             t0 = time.time()

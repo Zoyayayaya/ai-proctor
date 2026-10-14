@@ -147,6 +147,13 @@ def fig5_temporal(df: pd.DataFrame, outdir: Path, scenario: str):
         print("  skipping Fig. 5: no cheating-scenario rows found")
         return
 
+    # smoothed_score is produced by eval.add_rule_scores, not written by
+    # extract_features, so a freshly extracted dataset does not carry it.
+    # Recompute rather than assume it is present.
+    if "smoothed_score" not in sub.columns:
+        import eval as ev
+        sub = ev.add_rule_scores(sub)
+
     if "t_seconds" in sub.columns:
         sub["t"] = sub["t_seconds"].astype(float)
     else:

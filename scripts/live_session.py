@@ -59,7 +59,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import resource
 import signal
 import sys
 import time
@@ -92,21 +91,8 @@ STOP = {"flag": False, "reason": ""}
 # --------------------------------------------------------------------------
 # resource helpers
 # --------------------------------------------------------------------------
-def peak_rss_mb() -> float:
-    """Peak resident set size of this process, in MB.
-
-    macOS reports ru_maxrss in bytes; Linux in kilobytes. Normalise both.
-    """
-    r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return r / (1024 * 1024) if sys.platform == "darwin" else r / 1024
-
-
-def free_gb(path: Path) -> float:
-    try:
-        st = os.statvfs(str(path))
-        return st.f_bavail * st.f_frsize / (1024 ** 3)
-    except Exception:
-        return float("inf")
+from sysutil import (free_gb, open_camera, open_writer,  # noqa: E402
+                     peak_rss_mb, pick_device)
 
 
 def install_signal_handlers():
@@ -328,17 +314,6 @@ def build_detector(device, imgsz, half, stride_map):
     return Detector(device=device, imgsz=imgsz, half=half, stride=stride_map)
 
 
-def open_camera(idx, w, h, fps):
-    import cv2
-    cap = cv2.VideoCapture(idx)
-    if not cap.isOpened():
-        return None
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-    cap.set(cv2.CAP_PROP_FPS, fps)
-    return cap
-
-
 def overlay(frame, f, raw, smoothed, decision, trace, footer):
     import cv2
     out = frame.copy()
@@ -478,17 +453,16 @@ def main():
     det.warmup(actual_w, actual_h)
     print("  warm.")
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = raw_writer = None
+    codec = None
     if not args.no_video:
-        writer = cv2.VideoWriter(str(video_path), fourcc, args.fps, (actual_w, actual_h))
-        if not writer.isOpened():
-            writer = None
-            print("  !! video writer unavailable; continuing without video")
+        writer, codec = open_writer(video_path, args.fps, (actual_w, actual_h))
+        if writer is None:
+            print("  !! no usable video encoder; continuing without video")
+        else:
+            print(f"  video codec        : {codec}")
     if args.keep_raw:
-        raw_writer = cv2.VideoWriter(str(raw_path), fourcc, args.fps, (actual_w, actual_h))
-        if not raw_writer.isOpened():
-            raw_writer = None
+        raw_writer, _ = open_writer(raw_path, args.fps, (actual_w, actual_h))
 
     state = LiveState()
     if args.web:

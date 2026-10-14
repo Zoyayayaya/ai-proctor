@@ -68,22 +68,29 @@ def parse_name(stem: str):
     return scen, person, rep
 
 
-def build_detectors():
-    """FaceMesh / Hands / Pose / YOLO, with exam.py's confidence settings."""
-    import mediapipe as mp
-    from ultralytics import YOLO
+def build_detector(device: str, imgsz: int, half: bool, stride: dict):
+    """
+    The shared, tuned detector (scripts/detector.py).
 
-    fm = mp.solutions.face_mesh.FaceMesh(
-        min_detection_confidence=0.5, min_tracking_confidence=0.5)
-    hands = mp.solutions.hands.Hands(
-        min_detection_confidence=0.5, min_tracking_confidence=0.5)
-    pose = mp.solutions.pose.Pose(
-        min_detection_confidence=0.7, min_tracking_confidence=0.7)
-    yolo = YOLO("yolov5s.pt")
-    return fm, hands, pose, yolo
+    NOTE ON CADENCE. Offline extraction runs every stage on every frame by
+    default - stride 1 across the board. Decimation is a *live* optimisation for
+    real-time throughput; here there is no time pressure, so the faithful choice
+    is to evaluate the paper's feature definitions on every frame. The GPU and
+    imgsz settings are pure speed and change nothing about the features, so they
+    are used freely.
+
+    Pass --imgsz 320 --stride-phone 5 etc. if you deliberately want offline
+    numbers that mirror the live deployment's settings instead.
+    """
+    from detector import Detector
+    return Detector(device=device, imgsz=imgsz, half=half, stride=stride)
 
 
-def process_clip(path: Path, fm, hands, pose, yolo, stride: int = 1) -> list[dict]:
+def process_clip(path: Path, det, stride: int = 1) -> list[dict]:
+    """
+    One clip -> rows. Frame stride here is a sampling choice (every Nth frame of
+    the video), independent of the detector's per-stage cadence.
+    """
     import cv2
 
     scen, person, rep = parse_name(path.stem)
@@ -97,7 +104,6 @@ def process_clip(path: Path, fm, hands, pose, yolo, stride: int = 1) -> list[dic
         fps = 25.0
 
     rows: list[dict] = []
-    shoulder_hist: list[tuple[float, float]] = []
     cheating_start: float | None = None
     idx = 0
 
@@ -110,67 +116,13 @@ def process_clip(path: Path, fm, hands, pose, yolo, stride: int = 1) -> list[dic
             continue
 
         t = idx / fps
-        h, w, _ = frame.shape
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        face_res = fm.process(rgb)
-        hand_res = hands.process(rgb)
-        pose_res = pose.process(rgb)
-        yolo_res = yolo(frame, verbose=False)
-
         idx += 1
-        if not face_res.multi_face_landmarks:
+        f = det.detect(frame)
+        if not f["face"]:
             continue
 
-        fl = face_res.multi_face_landmarks[0]
-
-        def px(lm):
-            return int(lm.x * w), int(lm.y * h)
-
-        left_eye = px(fl.landmark[33])
-        right_eye = px(fl.landmark[263])
-        nose = px(fl.landmark[1])
-        # exam.py uses integer floor division here, so the offline port does too
-        eye_center_x = (left_eye[0] + right_eye[0]) // 2
-        head_tilt = abs(left_eye[1] - right_eye[1])
-        eye_ratio = eye_center_x / w
-
-        hand_on_table = 0
-        if hand_res.multi_hand_landmarks:
-            for hand in hand_res.multi_hand_landmarks:
-                if hand.landmark[0].y > rs.TABLE_REGION_THRESHOLD:
-                    hand_on_table = 1
-
-        body_tilt = 0
-        looking_up = 0
-        if pose_res.pose_landmarks:
-            pl = pose_res.pose_landmarks
-            ls = pl.landmark[11]  # LEFT_SHOULDER
-            rsh = pl.landmark[12]  # RIGHT_SHOULDER
-            shoulder_hist.append((ls.x, rsh.x))
-            if len(shoulder_hist) > SHOULDER_WINDOW:
-                shoulder_hist.pop(0)
-            avg_l = float(np.mean([s[0] for s in shoulder_hist]))
-            avg_r = float(np.mean([s[1] for s in shoulder_hist]))
-            diff = abs(avg_l - avg_r)
-            if diff <= SHOULDER_LANDMARK_ERROR and diff < SHOULDER_LEVEL_MAX_DIFF:
-                if avg_l > avg_r + rs.SHOULDER_TILT_THRESHOLD:
-                    body_tilt = 1
-                elif avg_r > avg_l + rs.SHOULDER_TILT_THRESHOLD:
-                    body_tilt = 1
-            if nose[1] < h * rs.LOOKING_UP_THRESHOLD:
-                looking_up = 1
-
-        phone_detected = 0
-        for r in yolo_res:
-            for b in r.boxes:
-                if (int(b.cls[0]) == PHONE_CLASS_ID
-                        and float(b.conf[0]) > PHONE_CONF):
-                    phone_detected = 1
-
         # duration accrues only while a suspicious state holds (exam.py logic)
-        suspicious = rs.suspicious_indicators(eye_ratio, head_tilt, body_tilt, looking_up)
-        active = suspicious >= 2 or phone_detected == 1
+        active = f["suspicious_count"] >= 2 or f["phone_detected"] == 1
         if active:
             if cheating_start is None:
                 cheating_start = t
@@ -182,10 +134,10 @@ def process_clip(path: Path, fm, hands, pose, yolo, stride: int = 1) -> list[dic
         rows.append(dict(
             session_id=f"p{person}", clip_id=f"{scen}_p{person}_r{rep}",
             scenario=scen, repeat=rep, frame_idx=idx - 1, t_seconds=round(t, 3),
-            eye_ratio=eye_ratio, head_tilt=head_tilt, body_tilt=body_tilt,
-            looking_up=looking_up, hand_on_table=hand_on_table,
-            phone_detected=phone_detected, duration=round(duration, 3),
-            label=label,
+            eye_ratio=f["eye_ratio"], head_tilt=f["head_tilt"],
+            body_tilt=f["body_tilt"], looking_up=f["looking_up"],
+            hand_on_table=f["hand_on_table"], phone_detected=f["phone_detected"],
+            duration=round(duration, 3), label=label,
         ))
 
     cap.release()
@@ -198,7 +150,20 @@ def main():
     ap.add_argument("--clips", default="data/clips")
     ap.add_argument("--out", default="data/dataset_labelled.csv")
     ap.add_argument("--stride", type=int, default=1,
-                    help="process every Nth frame (live exam.py uses FRAME_SKIP=2)")
+                    help="sample every Nth VIDEO frame (1 = all frames)")
+
+    # detector tuning. Defaults are chosen for offline FIDELITY: every stage on
+    # every frame, at the resolution the paper's numbers were produced at.
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
+    ap.add_argument("--imgsz", type=int, default=640,
+                    help="YOLO inference size. 640 = paper fidelity (default offline); "
+                         "320 is the live deployment setting, ~8x faster")
+    ap.add_argument("--half", action="store_true", help="fp16 inference on the GPU")
+    ap.add_argument("--stride-face", type=int, default=1)
+    ap.add_argument("--stride-hands", type=int, default=1)
+    ap.add_argument("--stride-pose", type=int, default=1)
+    ap.add_argument("--stride-phone", type=int, default=1,
+                    help="1 = check for a phone on every frame (offline default)")
     args = ap.parse_args()
 
     clips_dir = Path(args.clips)
@@ -220,12 +185,17 @@ def main():
         print("error: no usable clips found.", file=sys.stderr)
         return 1
 
-    print(f"processing {len(good)} clips (stride={args.stride}) ...")
-    fm, hands, pose, yolo = build_detectors()
+    print(f"processing {len(good)} clips "
+          f"(video stride={args.stride}, detector imgsz={args.imgsz}) ...")
+    det = build_detector(args.device, args.imgsz, args.half,
+                         {"face": args.stride_face, "hands": args.stride_hands,
+                          "pose": args.stride_pose, "phone": args.stride_phone})
+    print(f"  device {det.device}   stride {det.stride}")
+    det.warmup(1280, 720)
 
     all_rows = []
     for i, p in enumerate(good, 1):
-        rows = process_clip(p, fm, hands, pose, yolo, stride=args.stride)
+        rows = process_clip(p, det, stride=args.stride)
         all_rows.extend(rows)
         print(f"  [{i}/{len(good)}] {p.name:22} -> {len(rows):4d} frames")
 
@@ -239,6 +209,9 @@ def main():
           f"{df['session_id'].nunique()} sessions")
     print(f"  class balance: {df['label'].value_counts().sort_index().to_dict()}")
     print(f"  phone-positive frames: {int(df['phone_detected'].sum())}")
+    print()
+    print(det.report())
+    det.close()
     print("\nnext: uv run python scripts/eval.py")
     return 0
 

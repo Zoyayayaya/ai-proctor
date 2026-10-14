@@ -185,7 +185,17 @@ def _make_video(path, n=6, fps=5.0):
     vw.release()
 
 
-def _stub_detectors(face_lm, wrist_y, lx, rx, boxes):
+def _make_detector(face_lm, wrist_y, lx, rx, boxes, cadence=1):
+    """
+    A real Detector with its four models swapped for stubs.
+
+    The feature maths lives in Detector.detect now, so that is what these tests
+    must target - testing it through extract_features would only re-test the
+    stub. __init__ is bypassed because it would load the real models.
+    """
+    from collections import deque
+    from detector import Detector
+
     class Face:
         def process(self, _rgb):
             return _FaceMeshResult(face_lm)
@@ -199,103 +209,149 @@ def _stub_detectors(face_lm, wrist_y, lx, rx, boxes):
             return _PoseResult(lx, rx)
 
     class Yolo:
-        def __call__(self, _frame, verbose=False):
+        def __call__(self, _frame, **kw):
             return [_YoloResult(boxes)]
 
-    return Face(), Hands(), Pose(), Yolo()
+    d = Detector.__new__(Detector)
+    d.device, d.imgsz, d.half = "cpu", 320, False
+    d.stride = {k: cadence for k in ("face", "hands", "pose", "phone")}
+    d.interval_ms, d.use_time, d.calls = {}, False, 0
+    d._last_run = {k: 0.0 for k in d.stride}
+    d._n = {k: 0 for k in d.stride}
+    d._ms = {k: 0.0 for k in d.stride}
+    d._shoulder = deque(maxlen=10)
+    d._cache = {"face": False, "eye_ratio": None, "head_tilt": None,
+                "looking_up": 0, "hand_on_table": 0, "body_tilt": 0,
+                "phone_detected": 0}
+    d._fm, d._hd, d._ps, d._yolo = Face(), Hands(), Pose(), Yolo()
+    return d
 
 
-def test_extractor_neutral_frame(tmp_path):
-    """Centred, upright, no phone, shoulders level -> benign features, label 0."""
-    import extract_features as ef
-    vid = tmp_path / "S1_p1_r1.mp4"
-    _make_video(vid)
-    fm, hd, ps, yl = _stub_detectors(_face(), None, 0.3, 0.7, [])
-    rows = ef.process_clip(vid, fm, hd, ps, yl)
-    assert rows, "expected at least one processed frame"
-    r = rows[0]
-    assert r["eye_ratio"] == pytest.approx(0.5)
-    assert r["head_tilt"] == 0
-    assert r["body_tilt"] == 0
-    assert r["looking_up"] == 0
-    assert r["hand_on_table"] == 0
-    assert r["phone_detected"] == 0
-    assert r["label"] == 0
-    assert r["scenario"] == "S1"
-    assert r["session_id"] == "p1"
+class _StubDetector:
+    """Minimal stand-in for process_clip tests: returns canned features."""
+
+    def __init__(self, feats):
+        self.feats = feats
+        self.calls = 0
+
+    def detect(self, _frame):
+        self.calls += 1
+        f = dict(face=True, eye_ratio=0.5, head_tilt=0, body_tilt=0,
+                 looking_up=0, hand_on_table=0, phone_detected=0, suspicious_count=0)
+        f.update(self.feats)
+        return f
 
 
-def test_extractor_phone_frame_is_labelled_positively(tmp_path):
-    """A visible phone must be recorded, and the scenario label must be 1."""
-    import extract_features as ef
-    vid = tmp_path / "S6_p2_r1.mp4"
-    _make_video(vid)
-    fm, hd, ps, yl = _stub_detectors(_face(), None, 0.3, 0.7, [_Box(67, 0.55)])
-    rows = ef.process_clip(vid, fm, hd, ps, yl)
-    assert rows[0]["phone_detected"] == 1
-    assert rows[0]["label"] == 1
-    assert rows[0]["session_id"] == "p2"
+# --- Detector.detect: the feature maths -----------------------------------
+def test_detector_neutral_frame():
+    d = _make_detector(_face(), None, 0.3, 0.7, [])
+    f = d.detect(np.zeros((H, W, 3), dtype=np.uint8))
+    assert f["face"] is True
+    assert f["eye_ratio"] == pytest.approx(0.5)
+    assert f["head_tilt"] == 0
+    assert f["body_tilt"] == 0
+    assert f["looking_up"] == 0
+    assert f["hand_on_table"] == 0
+    assert f["phone_detected"] == 0
+    assert f["suspicious_count"] == 0
 
 
-def test_extractor_low_confidence_phone_is_ignored(tmp_path):
+def test_detector_phone_above_threshold():
+    d = _make_detector(_face(), None, 0.3, 0.7, [_Box(67, 0.55)])
+    assert d.detect(np.zeros((H, W, 3), dtype=np.uint8))["phone_detected"] == 1
+
+
+def test_detector_phone_below_threshold_is_ignored():
     """exam.py only counts a phone above confidence 0.1."""
-    import extract_features as ef
-    vid = tmp_path / "S6_p1_r1.mp4"
-    _make_video(vid)
-    fm, hd, ps, yl = _stub_detectors(_face(), None, 0.3, 0.7, [_Box(67, 0.05)])
-    rows = ef.process_clip(vid, fm, hd, ps, yl)
-    assert rows[0]["phone_detected"] == 0
+    d = _make_detector(_face(), None, 0.3, 0.7, [_Box(67, 0.05)])
+    assert d.detect(np.zeros((H, W, 3), dtype=np.uint8))["phone_detected"] == 0
 
 
-def test_extractor_looking_up_and_head_tilt(tmp_path):
-    """Nose high in frame and a vertical eye offset must register."""
-    import extract_features as ef
-    vid = tmp_path / "S5_p1_r1.mp4"
-    _make_video(vid)
+def test_detector_looking_up_and_head_tilt():
     lm = [_LM(0.5, 0.5) for _ in range(468)]
     lm[33] = _LM(0.4, 0.30)
     lm[263] = _LM(0.6, 0.50)
-    lm[1] = _LM(0.5, 0.10)  # above h*0.25 = 60px
-    fm, hd, ps, yl = _stub_detectors(lm, None, 0.3, 0.7, [])
-    rows = ef.process_clip(vid, fm, hd, ps, yl)
-    assert rows[0]["looking_up"] == 1
-    assert rows[0]["head_tilt"] == abs(72 - 120)
-    assert rows[0]["label"] == 1
+    lm[1] = _LM(0.5, 0.10)
+    d = _make_detector(lm, None, 0.3, 0.7, [])
+    f = d.detect(np.zeros((H, W, 3), dtype=np.uint8))
+    assert f["looking_up"] == 1
+    assert f["head_tilt"] == abs(72 - 120)
+    assert f["suspicious_count"] == 2
 
 
-def test_extractor_hand_on_table(tmp_path):
-    import extract_features as ef
-    vid = tmp_path / "S2_p1_r1.mp4"
-    _make_video(vid)
-    fm, hd, ps, yl = _stub_detectors(_face(), 0.85, 0.3, 0.7, [])
-    rows = ef.process_clip(vid, fm, hd, ps, yl)
-    assert rows[0]["hand_on_table"] == 1
-    assert rows[0]["label"] == 0
+def test_detector_hand_on_table():
+    d = _make_detector(_face(), 0.85, 0.3, 0.7, [])
+    assert d.detect(np.zeros((H, W, 3), dtype=np.uint8))["hand_on_table"] == 1
 
 
-def test_extractor_skips_frames_without_a_face(tmp_path):
+def test_detector_no_face_is_reported_not_crashed():
+    d = _make_detector(None, None, 0.3, 0.7, [])
+    f = d.detect(np.zeros((H, W, 3), dtype=np.uint8))
+    assert f["face"] is False
+    assert f["eye_ratio"] is None
+
+
+def test_detector_cadence_carries_values_forward():
+    """With a stride, a stage that does not run must reuse its last result."""
+    d = _make_detector(_face(), 0.85, 0.3, 0.7, [], cadence=2)
+    z = np.zeros((H, W, 3), dtype=np.uint8)
+    first = d.detect(z)      # calls 1 -> every stage runs
+    second = d.detect(z)     # call 2 -> nothing runs, values carried
+    assert first["hand_on_table"] == 1
+    assert second["hand_on_table"] == 1
+    assert second["stages_run"] == 0
+
+
+# --- process_clip: duration, labelling and row schema ---------------------
+def test_process_clip_writes_the_expected_schema(tmp_path):
     import extract_features as ef
     vid = tmp_path / "S1_p1_r1.mp4"
     _make_video(vid)
-    fm, hd, ps, yl = _stub_detectors(None, None, 0.3, 0.7, [])
-    rows = ef.process_clip(vid, fm, hd, ps, yl)
+    det = _StubDetector({})
+    rows = ef.process_clip(vid, det)
+    assert rows
+    assert set(rows[0]) == {"session_id", "clip_id", "scenario", "repeat",
+                            "frame_idx", "t_seconds", "eye_ratio", "head_tilt",
+                            "body_tilt", "looking_up", "hand_on_table",
+                            "phone_detected", "duration", "label"}
+    assert rows[0]["session_id"] == "p1"
+    assert rows[0]["clip_id"] == "S1_p1_r1"
+    assert rows[0]["label"] == 0
+
+
+def test_process_clip_label_comes_from_the_scenario(tmp_path):
+    import extract_features as ef
+    vid = tmp_path / "S7_p2_r3.mp4"
+    _make_video(vid)
+    rows = ef.process_clip(vid, _StubDetector({"phone_detected": 1}))
+    assert rows[0]["label"] == 1
+    assert rows[0]["session_id"] == "p2"
+    assert rows[0]["scenario"] == "S7"
+
+
+def test_process_clip_skips_frames_without_a_face(tmp_path):
+    import extract_features as ef
+    vid = tmp_path / "S1_p1_r1.mp4"
+    _make_video(vid)
+    rows = ef.process_clip(vid, _StubDetector({"face": False}))
     assert rows == []
 
 
-def test_extractor_accumulates_duration(tmp_path):
-    """Duration must build while a suspicious state persists, matching exam.py."""
+def test_process_clip_accumulates_duration_only_while_active(tmp_path):
+    """Duration builds during a suspicious state and resets when it ends."""
     import extract_features as ef
     vid = tmp_path / "S6_p1_r1.mp4"
-    _make_video(vid, n=6, fps=5.0)   # 0.2 s between frames
-    fm, hd, ps, yl = _stub_detectors(_face(), None, 0.3, 0.7, [_Box(67, 0.9)])
-    rows = ef.process_clip(vid, fm, hd, ps, yl)
+    _make_video(vid, n=6, fps=5.0)      # 0.2 s between frames
+    rows = ef.process_clip(vid, _StubDetector({"phone_detected": 1,
+                                               "suspicious_count": 1}))
     assert len(rows) >= 3
     assert rows[0]["duration"] == 0.0
-    assert rows[-1]["duration"] > 0.0
-    # phone alone keeps the suspicious state active on every frame
-    assert all(r["phone_detected"] == 1 for r in rows)
     durs = [r["duration"] for r in rows]
     assert durs == sorted(durs)
+    assert durs[-1] > 0.0
+
+    rows2 = ef.process_clip(vid, _StubDetector({}))   # never active
+    assert all(r["duration"] == 0.0 for r in rows2)
 
 
 # --------------------------------------------------------------------------

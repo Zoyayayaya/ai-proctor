@@ -101,17 +101,7 @@ FEATURE_KEYS = ("eye_ratio", "head_tilt", "body_tilt", "looking_up",
 DEFAULT_STRIDE = {"face": 1, "hands": 2, "pose": 4, "phone": 5}
 
 
-def pick_device(prefer: str = "auto") -> str:
-    """Apple GPU when it exists, else CPU."""
-    if prefer != "auto":
-        return prefer
-    try:
-        import torch
-        if torch.backends.mps.is_available():
-            return "mps"
-    except Exception:
-        pass
-    return "cpu"
+from sysutil import pick_device  # noqa: E402  (CUDA > MPS > CPU)
 
 
 class Detector:
@@ -153,9 +143,12 @@ class Detector:
         self._n = {"face": 0, "hands": 0, "pose": 0, "phone": 0}
         self._ms = {"face": 0.0, "hands": 0.0, "pose": 0.0, "phone": 0.0}
 
-        # instance-level carry-forward cache, so two Detectors never share state
+        # instance-level carry-forward cache, so two Detectors never share state.
+        # Every key read by detect() must be present here: a missing key is a
+        # KeyError on the first call, not a default.
         self._cache = {"face": False, "eye_ratio": None, "head_tilt": None,
-                       "hand_on_table": 0, "body_tilt": 0, "phone_detected": 0}
+                       "looking_up": 0, "hand_on_table": 0, "body_tilt": 0,
+                       "phone_detected": 0}
 
     # ------------------------------------------------------------------
     def _due(self, stage: str) -> bool:
@@ -177,8 +170,11 @@ class Detector:
         """One frame -> the seven features. Definitions unchanged; cadence staged."""
         import cv2
         h, w = frame.shape[:2]
-        self.calls += 1
         c = self._cache
+        # NOTE: self.calls is incremented at the END of this method, so the first
+        # call has calls == 0 and therefore satisfies `calls % stride == 0` for
+        # every stage. Incrementing first meant the first call ran nothing and
+        # read uninitialised cache entries - a crash for any stride above 1.
 
         f = dict(face=False, eye_ratio=None, head_tilt=None, body_tilt=0,
                  looking_up=0, hand_on_table=0, phone_detected=0,
@@ -267,6 +263,7 @@ class Detector:
             + int(bool(f["body_tilt"]))
             + int(bool(f["looking_up"]))
         )
+        self.calls += 1          # see the note at the top of this method
         return f
 
     # ------------------------------------------------------------------

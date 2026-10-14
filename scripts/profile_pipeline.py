@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import resource
 import statistics
 import sys
 import time
@@ -30,9 +29,7 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def peak_rss_mb() -> float:
-    r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return r / (1024 * 1024) if sys.platform == "darwin" else r / 1024
+from sysutil import peak_rss_mb  # noqa: E402
 
 
 def timeit(fn, iters):

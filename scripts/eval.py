@@ -127,8 +127,15 @@ def grouped_oof(X, y, groups, feature_cols):
         model = make_model()
         model.fit(X.iloc[tr][feature_cols], y.iloc[tr])
         pred[te] = model.predict(X.iloc[te][feature_cols])
-        proba[te] = model.predict_proba(X.iloc[te][feature_cols])[:, 1]
-        folds.append({"fold": i, "n_train": int(len(tr)), "n_test": int(len(te))})
+        # A fold whose training split contains only one class yields a single
+        # predict_proba column, and indexing [:, 1] then raises IndexError. That
+        # is reachable on real data whenever a fold happens to hold only safe
+        # clips, so it is handled rather than assumed away.
+        p = model.predict_proba(X.iloc[te][feature_cols])
+        proba[te] = (p[:, 1] if p.shape[1] > 1
+                     else float(int(model.classes_[0]) == 1))
+        folds.append({"fold": i, "n_train": int(len(tr)), "n_test": int(len(te)),
+                      "train_classes": sorted(int(c) for c in model.classes_)})
     return pred, proba, folds
 
 
@@ -307,6 +314,27 @@ def main():
     missing = required - set(df.columns)
     if missing:
         print(f"error: {data_path} is missing columns: {sorted(missing)}", file=sys.stderr)
+        return 1
+
+    # Refuse to produce numbers that would be meaningless. A single-class or
+    # single-session dataset silently yields a table of NaNs, which is worse
+    # than an error because it looks like a result.
+    problems = []
+    classes = sorted(df["label"].unique().tolist())
+    if len(classes) < 2:
+        problems.append(f"only one class present (label={classes}); "
+                        f"both safe and cheating clips are required")
+    if df["session_id"].nunique() < 2:
+        problems.append(f"only {df['session_id'].nunique()} session(s); grouped "
+                        f"cross-validation needs at least 2 (record a second person)")
+    if df["clip_id"].nunique() < 3:
+        problems.append(f"only {df['clip_id'].nunique()} clip(s)")
+    if problems:
+        print("error: the dataset cannot support a grouped evaluation:", file=sys.stderr)
+        for p_ in problems:
+            print(f"  - {p_}", file=sys.stderr)
+        print("\n  record the full scenario set per RECORDING_SPEC.md, then re-run.",
+              file=sys.stderr)
         return 1
 
     res = evaluate(df)
