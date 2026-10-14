@@ -516,7 +516,7 @@ def test_telemetry_never_sends_features_or_media():
     assert "environment" in payload
 
 
-def test_telemetry_endpoint_precedence():
+def test_telemetry_endpoint_precedence(monkeypatch):
     """
     Explicit argument > environment > the built-in default.
 
@@ -524,21 +524,20 @@ def test_telemetry_endpoint_precedence():
     means telemetry is ON unless the caller opts out. That is a deliberate
     change from off-by-default, so it is pinned here.
     """
-    import os
     import telemetry
 
+    monkeypatch.setattr(telemetry, "load_env_file", lambda *a, **k: {})
     # default when nothing is set
-    os.environ.pop(telemetry.ENV_URL, None)
+    monkeypatch.delenv(telemetry.ENV_URL, raising=False)
     assert telemetry.resolve(None, None)[0] == telemetry.DEFAULT_ENDPOINT
 
     # environment wins over the default
-    os.environ[telemetry.ENV_URL] = "https://example.invalid/override"
+    monkeypatch.setenv(telemetry.ENV_URL, "https://example.invalid/override")
     assert telemetry.resolve(None, None)[0] == "https://example.invalid/override"
 
     # explicit argument wins over everything
     assert telemetry.resolve("https://example.invalid/explicit", None)[0] == \
         "https://example.invalid/explicit"
-    os.environ.pop(telemetry.ENV_URL, None)
 
 
 def test_telemetry_can_be_disabled():
@@ -548,7 +547,7 @@ def test_telemetry_can_be_disabled():
     assert r["detail"] == "disabled"
 
 
-def test_telemetry_encrypts_when_a_key_is_set():
+def test_telemetry_encrypts_when_a_key_is_set(monkeypatch):
     """
     With a key, the body must be an encrypted envelope - not the metrics.
 
@@ -556,12 +555,13 @@ def test_telemetry_encrypts_when_a_key_is_set():
     rather than assumed.
     """
     import json
-    import os
     import telemetry
     from telemetry_crypto import decrypt, is_envelope
 
-    os.environ[telemetry.ENV_KEY] = "a-test-key"
-    try:
+    # isolate from whatever .env happens to hold on this machine
+    monkeypatch.setattr(telemetry, "load_env_file", lambda *a, **k: {})
+    monkeypatch.setenv(telemetry.ENV_KEY, "a-test-key")
+    if True:
         payload = telemetry.build_payload(
             {"dataset": {"n_frames": 10}, "models": {"hybrid": {"accuracy": 0.9}}},
             device="cpu")
@@ -575,13 +575,21 @@ def test_telemetry_encrypts_when_a_key_is_set():
         back = decrypt(envelope, "a-test-key")
         assert back["models"]["hybrid"]["accuracy"] == 0.9
         assert back["dataset"]["n_frames"] == 10
-    finally:
-        os.environ.pop(telemetry.ENV_KEY, None)
 
 
-def test_telemetry_plaintext_without_a_key():
+def test_telemetry_plaintext_without_a_key(monkeypatch):
+    """
+    No key anywhere -> plaintext, which is the case the warning exists for.
+
+    .env is stubbed out, because a developer machine may legitimately have one
+    and the test must not depend on that.
+    """
     import telemetry
     from telemetry_crypto import is_envelope
+
+    monkeypatch.setattr(telemetry, "load_env_file", lambda *a, **k: {})
+    monkeypatch.delenv(telemetry.ENV_KEY, raising=False)
+    assert telemetry.resolve_key() == ""
     assert is_envelope(telemetry.encrypt_for_send({"a": 1})) is False
 
 
