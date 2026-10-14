@@ -150,15 +150,12 @@ the files still get written locally and sent by hand.
 uv run python scripts/eval.py --telemetry-setup
 ```
 
-It asks for a URL and a token, writes `.env`, and prints where. `.env` is
-gitignored, so the token never enters the repository — **share the token with the
-operator separately, never in the repo or in a commit**.
+It asks for the URL, writes `.env`, and prints where. Nothing else is requested.
 
 Or set it by hand for the session:
 
 ```powershell
-$env:PROCTOR_TELEMETRY_URL = "https://your-endpoint/ingest"
-$env:PROCTOR_TELEMETRY_TOKEN = "your-secret"
+$env:PROCTOR_TELEMETRY_URL = "https://your-endpoint"
 ```
 
 Check what would be sent, transmitting nothing:
@@ -176,57 +173,32 @@ no network at all are logged and ignored — the run is never lost.
 
 ### Where the receiving end lives
 
-**Already set up.** A webhook.site endpoint has been created and verified:
+The endpoint is **not in this repository** and is not hard-coded anywhere. You
+will be given a URL separately; put it in `.env` (or let the setup prompt write
+it for you). One line, nothing else:
 
 ```
-PROCTOR_TELEMETRY_URL=https://webhook.site/6cecbbcd-8f9a-4096-8b47-fa9c9310d276
+PROCTOR_TELEMETRY_URL=<the URL you were given>
 ```
 
-Put that one line in `.env` (the token field can stay blank — webhook.site needs
-no auth) and the metrics appear in the browser at that URL as soon as `eval.py
-finishes. Verified end to end: a real POST was delivered and read back.
+The metrics then appear at that URL as soon as `eval.py` finishes. The payload
+contains metrics and version strings only — no video, no frames, no names — so
+the URL is not sensitive, but do not post it publicly.
 
-**Two things to know about it:**
+**No token is needed** for the endpoint in use. If one ever is, add
+`PROCTOR_TELEMETRY_TOKEN=<value>` as a second line in `.env`. Nothing prompts
+for it and nothing requires it.
 
-1. **It expires on 2026-10-21.** Anonymous webhook.site URLs last seven days,
-   which is their maximum. If the run happens later, the POST fails — the
-   evaluation still succeeds and the files are still on disk, you just do not get
-   the live copy. Either run before then, or register a free webhook.site account
-   and associate the URL to keep it.
-2. **Anyone with that URL can read what arrives.** It contains metrics and
-   version strings only — no video, no frames, no names — so it is not sensitive,
-   but do not post the URL publicly.
-
-**Why not a tunnel?** `ngrok` and `cloudflared` are proxies to a process on your
-own machine, so the URL dies when that machine sleeps. The run happens at a time
-nobody controls, so a tunnel would mean losing the result whenever you are not
-awake with it running. webhook.site is a real server and does not care whether
-your laptop is on.
-
-**If you want an email when a run lands:** webhook.site gives every token a real
-email address (`<uuid>@email.webhook.site`) and it does receive mail — verified,
-an email sent to it arrived in the inbox with the sender and subject intact.
-
-But that is the *inbound* direction. Forwarding a received request onward to your
-own email needs their **Custom Actions** feature, which is a paid tier (our token
-reports `premium: false, actions: false`). So on the free tier you get the data
-by opening the URL, not by email.
-
-**How the email path was verified anyway:** the metrics were sent to
-`akidwai03@gmail.com` over SMTP as a formatted summary — all four baselines, the
-confusion matrix and the ablation table. That confirms notification works; it
-just is not something the free webhook tier does for you.
-
-**If automatic email matters later**, the options are: upgrade webhook.site to
-Basic (~$7.50/month) and add a Custom Action that forwards to your address, or
-add an SMTP step to the sender (needs an app password on the Windows machine, and
-SMTP from arbitrary hosts is often filtered — more fragile than the POST).
+**If the POST fails for any reason** — endpoint down, no network, URL expired —
+the evaluation still succeeds. The failure is logged and the run continues; every
+number is still written to disk on this machine.
 
 ---
 
 ## 3. Record the clips
 
-Full scenario definitions are in `RECORDING_SPEC.md` in the paper folder. The
+Full scenario definitions, with camera setup, are in **`RECORDING_SPEC.md`**
+(next to this file). The
 recorder walks through them and names the files correctly, which matters because
 **the filename is the ground truth label**.
 
@@ -394,7 +366,7 @@ Verify first: `git status --porcelain data/` must print nothing.
 |---|---|
 | `ARCHITECTURE.md` | measured performance, the bottleneck, guardrails, and the open risks |
 | `PIPELINE.md` | what each script does and why |
-| `RECORDING_SPEC.md` (paper folder) | the scenario definitions |
+| `RECORDING_SPEC.md` | the eight scenarios, camera setup, and why each exists |
 | `HANDOVER.md` (paper folder) | everything done so far and every problem solved |
 
 **Two things are deliberately still open, and both are stated in

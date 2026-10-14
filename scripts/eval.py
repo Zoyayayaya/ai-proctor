@@ -295,7 +295,14 @@ def main():
     ap.add_argument("--telemetry-allow-http", action="store_true",
                     help="permit a plain http:// endpoint - for local testing only")
     ap.add_argument("--telemetry-setup", action="store_true",
-                    help="interactively write .env with the endpoint and token")
+                    help="interactively write .env to override the built-in endpoint")
+    ap.add_argument("--no-telemetry", action="store_true",
+                    help="do not send telemetry at all")
+    ap.add_argument("--telemetry-key", default="",
+                    help="shared key for payload encryption, or set "
+                         "PROCTOR_TELEMETRY_KEY. Recommended: the endpoint URL "
+                         "is public, so without a key the metrics are readable "
+                         "by anyone who has it")
     ap.add_argument("--no-telemetry-prompt", action="store_true",
                     help="never prompt to configure telemetry (for unattended runs)")
     ap.add_argument("--run-label", default="",
@@ -378,20 +385,26 @@ def main():
     # Off unless a URL is configured. Never fails the run, and never sends
     # anything beyond metrics and environment metadata.
     import telemetry
-    # load .env (gitignored), and on a first interactive run offer to create it
-    u = telemetry.ensure_configured(
+    # .env, if present, overrides the built-in endpoint. The prompt only fires
+    # when explicitly asked for, because a default endpoint already exists.
+    telemetry.ensure_configured(
         force_setup=args.telemetry_setup,
-        interactive=not args.no_telemetry_prompt)
-    t = telemetry.resolve(args.telemetry_token, None)[1]
-    if u or args.telemetry_dry_run:
-        print()
+        interactive=not args.no_telemetry and not args.no_telemetry_prompt)
+
+    u, _t = telemetry.resolve(args.telemetry_url, args.telemetry_token)
+    print()
+    if args.no_telemetry:
+        print("  telemetry: disabled by --no-telemetry")
+        res["_telemetry"] = {"sent": False, "detail": "disabled"}
+    else:
+        print(f"  telemetry: endpoint {u}")
+        if not telemetry.check(u, args.telemetry_allow_http):
+            print("             metrics and environment only - no video, no "
+                  "frames, no filenames")
         res["_telemetry"] = telemetry.maybe_send(
             res, url=args.telemetry_url, token=args.telemetry_token,
             dry_run=args.telemetry_dry_run, allow_http=args.telemetry_allow_http,
             run_label=args.run_label, device=args.device)
-    else:
-        print("\n  telemetry: disabled (set --telemetry-url or "
-              "PROCTOR_TELEMETRY_URL to enable)")
     return 0
 
 

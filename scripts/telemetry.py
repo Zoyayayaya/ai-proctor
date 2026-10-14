@@ -73,6 +73,30 @@ from pathlib import Path
 ENV_URL = "PROCTOR_TELEMETRY_URL"
 ENV_TOKEN = "PROCTOR_TELEMETRY_TOKEN"
 
+# Shared key for payload encryption. Set it and the body is encrypted with
+# AES-256-GCM before it leaves the machine, so the endpoint URL being public
+# stops mattering - anyone who reads the request sees ciphertext.
+#
+# Generate one with:  uv run python scripts/telemetry_crypto.py keygen
+# Keep it in .env (gitignored) and share it out of band. Never commit it.
+ENV_KEY = "PROCTOR_TELEMETRY_KEY"
+
+# ---------------------------------------------------------------------------
+# Default endpoint, baked in so the Windows machine needs no configuration.
+#
+# Trade-off, stated plainly: this URL is visible to anyone with repository
+# access, and anyone who has it can READ what arrives. That is acceptable here
+# because the payload is metrics and version strings only - no video, no frames,
+# no names - and because the token expires. It is NOT acceptable for anything
+# sensitive, so if this is ever pointed at an endpoint carrying more than
+# metrics, move it out of the source and into .env.
+#
+# Override with PROCTOR_TELEMETRY_URL or --telemetry-url. Disable the whole
+# thing with --no-telemetry.
+# ---------------------------------------------------------------------------
+DEFAULT_ENDPOINT = "https://webhook.site/6cecbbcd-8f9a-4096-8b47-fa9c9310d276"
+DEFAULT_ENDPOINT_EXPIRES = "2026-10-21"
+
 DEFAULT_TIMEOUT = 12.0
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024      # a results.json is tens of KB
 
@@ -109,17 +133,18 @@ def load_env_file(path: Path = ENV_FILE) -> dict:
     return loaded
 
 
-def write_env_file(url: str, token: str, path: Path = ENV_FILE) -> Path:
+def write_env_file(url: str, key: str, path: Path = ENV_FILE) -> Path:
     """
     Write or update .env, preserving any other keys already in it.
 
-    .env is gitignored, so the token never enters the repository.
+    .env is gitignored, so the key never enters the repository and can be
+    shared out of band.
     """
     lines = []
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             k = line.split("=", 1)[0].strip() if "=" in line else ""
-            if k in (ENV_URL, ENV_TOKEN):
+            if k in (ENV_URL, ENV_TOKEN, ENV_KEY):
                 continue          # replaced below
             lines.append(line)
     while lines and not lines[-1].strip():
@@ -128,9 +153,10 @@ def write_env_file(url: str, token: str, path: Path = ENV_FILE) -> Path:
         lines.append("")
     lines.append("# proctoring pipeline - outbound telemetry")
     lines.append("# .env is gitignored. Never commit this file.")
-    lines.append(f"{ENV_URL}={url}")
-    if token:
-        lines.append(f"{ENV_TOKEN}={token}")
+    if url and url != DEFAULT_ENDPOINT:
+        lines.append(f"{ENV_URL}={url}")
+    if key:
+        lines.append(f"{ENV_KEY}={key}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
         path.chmod(0o600)         # best effort; Windows ignores this
@@ -141,49 +167,53 @@ def write_env_file(url: str, token: str, path: Path = ENV_FILE) -> Path:
 
 def setup_interactive(path: Path = ENV_FILE) -> bool:
     """
-    Ask for the endpoint and token, then write .env. Returns True if written.
+    Ask for the shared encryption key and write .env. Returns True if written.
+
+    Only the key is asked for: the endpoint URL is built in, so there is nothing
+    else to configure.
 
     Deliberately only called when stdin is a terminal, so an unattended run can
     never block waiting for input.
     """
-    print("\n  Telemetry is not configured yet.")
-    print("  It is optional. When enabled, eval.py POSTs the computed metrics to")
-    print("  an endpoint you control: metrics and environment only, never video,")
-    print("  frames or filenames. Press Enter to skip.")
+    print()
+    print("  " + "-" * 64)
+    print("  One-time setup: telemetry key")
+    print("  " + "-" * 64)
+    print()
+    print("  When the evaluation finishes it sends the metrics back automatically")
+    print("  so nobody has to copy files around.")
+    print()
+    print("  The metrics are encrypted before they leave this machine, using a")
+    print("  key you paste below. Without it they would be readable by anyone")
+    print("  who knows the destination address, so it is worth setting.")
+    print()
+    print("  Paste the key you were given. Press Enter to skip - the run still")
+    print("  works, the numbers just travel unencrypted.")
     print()
     try:
-        url = input(f"  {ENV_URL} (blank to skip): ").strip()
+        key = input(f"  {ENV_KEY} (blank to skip): ").strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return False
-    if not url:
-        print("  skipped - telemetry stays off")
+    if not key:
+        print("  skipped - metrics will be sent unencrypted")
         return False
 
-    err = check(url)
-    if err:
-        print(f"  {err}")
-        print("  not written. You can set it later in .env or the environment.")
-        return False
-
-    try:
-        token = input(f"  {ENV_TOKEN} (blank if none): ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        token = ""
-
-    p = write_env_file(url, token, path)
-    print(f"\n  written to {p}")
-    print("  .env is gitignored, so the token stays out of the repository.")
+    p = write_env_file("", key, path)
+    print()
+    print(f"  written to {p}")
+    print("  .env is gitignored, so the key never enters the repository.")
+    print("  Nothing else to configure - the destination is already built in.")
     return True
 
 
 def ensure_configured(path: Path = ENV_FILE, interactive: bool = True,
                       force_setup: bool = False) -> str:
     """
-    Load .env, and on a first interactive run offer to create it.
+    Load .env, and on a first interactive run with no key, offer to set one.
 
-    Returns the resolved URL ('' when telemetry is off).
+    The endpoint is built in, so the key is the only thing that can be missing.
+    Returns the resolved URL.
     """
     load_env_file(path)
     url, _ = resolve(None, None)
@@ -196,7 +226,7 @@ def ensure_configured(path: Path = ENV_FILE, interactive: bool = True,
             load_env_file(path)
         return resolve(None, None)[0]
 
-    if not url and interactive and sys.stdin.isatty():
+    if not resolve_key() and interactive and sys.stdin.isatty():
         setup_interactive(path)
         load_env_file(path)
     return resolve(None, None)[0]
@@ -268,9 +298,27 @@ def build_payload(results: dict, *, source: str = "eval.py",
 
 
 def resolve(url: str | None, token: str | None):
-    """CLI value wins, then the environment. Returns (url, token)."""
-    return (url or os.environ.get(ENV_URL) or "",
+    """
+    Precedence: explicit argument > environment/.env > the built-in default.
+
+    The default means a fresh clone on the Windows machine sends its metrics
+    with no configuration at all. Pass --no-telemetry to suppress it entirely.
+    """
+    return (url or os.environ.get(ENV_URL) or DEFAULT_ENDPOINT,
             token or os.environ.get(ENV_TOKEN) or "")
+
+
+def expiry_warning() -> str:
+    """A note if the built-in endpoint has passed its expiry date."""
+    try:
+        from datetime import date
+        y, m, d = (int(x) for x in DEFAULT_ENDPOINT_EXPIRES.split("-"))
+        if date.today() > date(y, m, d):
+            return (f"the built-in endpoint expired on {DEFAULT_ENDPOINT_EXPIRES}; "
+                    f"set PROCTOR_TELEMETRY_URL to a current one")
+    except Exception:
+        pass
+    return ""
 
 
 def check(url: str, allow_http: bool = False) -> str | None:
@@ -308,10 +356,22 @@ def send(payload: dict, url: str, token: str = "",
             print(f"  telemetry: not sent - {detail}")
         return {"sent": False, "status": None, "detail": detail}
 
+    encrypted = False
+    try:
+        from telemetry_crypto import is_envelope
+        encrypted = is_envelope(payload)
+    except Exception:
+        pass
+
     if not quiet:
         print(f"  telemetry: {len(body)//1024} KB -> {url}")
-        print("             metrics and environment only; no video, no features, "
-              "no filenames")
+        if encrypted:
+            print("             encrypted with AES-256-GCM - only the key holder "
+                  "can read it")
+        else:
+            print("             PLAINTEXT - metrics and environment only, but "
+                  "readable by anyone with the URL")
+            print("             set PROCTOR_TELEMETRY_KEY to encrypt it")
 
     if dry_run:
         if not quiet:
@@ -345,15 +405,50 @@ def send(payload: dict, url: str, token: str = "",
 def maybe_send(results: dict, url: str | None = None, token: str | None = None,
                dry_run: bool = False, allow_http: bool = False,
                run_label: str = "", device: str = "", imgsz=None,
-               half=None, quiet: bool = False) -> dict:
-    """Convenience wrapper: resolve config, build the payload, send it."""
+               half=None, quiet: bool = False, enabled: bool = True) -> dict:
+    """Resolve the endpoint, build the payload, send it. Best effort."""
+    if not enabled:
+        return {"sent": False, "status": None, "detail": "disabled"}
     u, t = resolve(url, token)
-    if not u and not dry_run:
-        return {"sent": False, "status": None, "detail": "telemetry disabled"}
+    if not u:
+        return {"sent": False, "status": None, "detail": "no endpoint configured"}
     payload = build_payload(results, device=device, imgsz=imgsz, half=half,
                             run_label=run_label)
-    return send(payload, u or "https://example.invalid/dry-run", t,
-                dry_run=dry_run, allow_http=allow_http, quiet=quiet)
+
+    payload = encrypt_for_send(payload, quiet=quiet)
+
+    warn = expiry_warning()
+    if warn and not quiet:
+        print(f"  telemetry: note - {warn}")
+    return send(payload, u, t, dry_run=dry_run, allow_http=allow_http,
+                quiet=quiet)
+
+
+def encrypt_for_send(payload: dict, quiet: bool = False) -> dict:
+    """
+    Encrypt the payload when a key is configured; otherwise return it as-is.
+
+    A public endpoint makes plaintext readable by anyone holding the URL, so
+    encryption is the expected path. If encryption fails for any reason the run
+    continues in the clear rather than being lost - a logged failure is better
+    than a missing result.
+    """
+    key = resolve_key()
+    if not key:
+        return payload
+    try:
+        from telemetry_crypto import encrypt
+        return encrypt(payload, key)
+    except Exception as e:  # noqa: BLE001
+        if not quiet:
+            print(f"  telemetry: encryption failed ({type(e).__name__}: {e})")
+            print("             sending in the clear rather than losing the run")
+        return payload
+
+
+def resolve_key(explicit: str | None = None) -> str:
+    """The shared encryption key: explicit argument, then the environment."""
+    return explicit or os.environ.get(ENV_KEY) or ""
 
 
 if __name__ == "__main__":

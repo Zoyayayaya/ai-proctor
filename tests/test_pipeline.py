@@ -516,14 +516,73 @@ def test_telemetry_never_sends_features_or_media():
     assert "environment" in payload
 
 
-def test_telemetry_is_off_by_default():
+def test_telemetry_endpoint_precedence():
+    """
+    Explicit argument > environment > the built-in default.
+
+    The default is baked in so the client machine needs no configuration, which
+    means telemetry is ON unless the caller opts out. That is a deliberate
+    change from off-by-default, so it is pinned here.
+    """
+    import os
     import telemetry
-    assert telemetry.resolve(None, None)[0] in ("", None) or \
-        telemetry.resolve(None, None)[0] == __import__("os").environ.get(
-            telemetry.ENV_URL, "")
-    r = telemetry.maybe_send({"dataset": {}, "models": {}}, url="", token="")
+
+    # default when nothing is set
+    os.environ.pop(telemetry.ENV_URL, None)
+    assert telemetry.resolve(None, None)[0] == telemetry.DEFAULT_ENDPOINT
+
+    # environment wins over the default
+    os.environ[telemetry.ENV_URL] = "https://example.invalid/override"
+    assert telemetry.resolve(None, None)[0] == "https://example.invalid/override"
+
+    # explicit argument wins over everything
+    assert telemetry.resolve("https://example.invalid/explicit", None)[0] == \
+        "https://example.invalid/explicit"
+    os.environ.pop(telemetry.ENV_URL, None)
+
+
+def test_telemetry_can_be_disabled():
+    import telemetry
+    r = telemetry.maybe_send({"dataset": {}, "models": {}}, enabled=False)
     assert r["sent"] is False
-    assert r["detail"] == "telemetry disabled"
+    assert r["detail"] == "disabled"
+
+
+def test_telemetry_encrypts_when_a_key_is_set():
+    """
+    With a key, the body must be an encrypted envelope - not the metrics.
+
+    This is the property that makes a public endpoint safe, so it is tested
+    rather than assumed.
+    """
+    import json
+    import os
+    import telemetry
+    from telemetry_crypto import decrypt, is_envelope
+
+    os.environ[telemetry.ENV_KEY] = "a-test-key"
+    try:
+        payload = telemetry.build_payload(
+            {"dataset": {"n_frames": 10}, "models": {"hybrid": {"accuracy": 0.9}}},
+            device="cpu")
+        envelope = telemetry.encrypt_for_send(payload)
+        assert is_envelope(envelope), "a key was set but the body is not encrypted"
+
+        blob = json.dumps(envelope)
+        assert "accuracy" not in blob, "the metrics leaked into the envelope"
+        assert "0.9" not in blob, "the metrics leaked into the envelope"
+
+        back = decrypt(envelope, "a-test-key")
+        assert back["models"]["hybrid"]["accuracy"] == 0.9
+        assert back["dataset"]["n_frames"] == 10
+    finally:
+        os.environ.pop(telemetry.ENV_KEY, None)
+
+
+def test_telemetry_plaintext_without_a_key():
+    import telemetry
+    from telemetry_crypto import is_envelope
+    assert is_envelope(telemetry.encrypt_for_send({"a": 1})) is False
 
 
 def test_telemetry_refuses_plain_http_without_opt_in():
