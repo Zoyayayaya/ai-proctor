@@ -452,3 +452,101 @@ def test_head_pose_rejects_implausible():
     landmarks[291] = (120, 130)
     out = av.head_pose(landmarks, 1280, 720)
     assert out is None or abs(out[0]) < av.MAX_ABS_PITCH
+
+
+# --------------------------------------------------------------------------
+# telemetry (scripts/telemetry.py)
+# --------------------------------------------------------------------------
+def test_telemetry_never_sends_features_or_media():
+    """
+    The payload must contain metrics and environment metadata only.
+
+    This is the guarantee the docstring makes, so it is enforced rather than
+    asserted in prose. If someone later forwards a richer dict, this fails.
+    """
+    import json
+    import telemetry
+
+    results = {
+        "dataset": {"n_frames": 500, "n_clips": 20, "n_sessions": 2,
+                    "class_balance": {"0": 250, "1": 250},
+                    "scenarios": ["S1", "S4"],
+                    # a stray field that must NOT survive
+                    "raw_rows": [{"eye_ratio": 0.5, "clip_id": "S1_p1_r1"}]},
+        "protocol": {"primary": "GroupKFold(5) by clip_id"},
+        "models": {"hybrid": {"accuracy": 0.9, "confusion_matrix": {"tn": 1}}},
+        "ablation": {"full_feature_set": {"accuracy": 0.9}},
+        "figures": {"confusion_matrix": {"tn": 1, "fp": 0}},
+        # fields that must never be transmitted
+        "features": [{"eye_ratio": 0.5, "head_tilt": 3}],
+        "video_path": "/some/where/session.mp4",
+        "clip_id": "S1_p1_r1",
+    }
+
+    payload = telemetry.build_payload(results, device="cpu")
+    blob = json.dumps(payload)
+
+    # Check at KEY level, not by substring: the protocol description legitimately
+    # mentions "clip_id" as the grouping field ("GroupKFold(5) by clip_id"), and
+    # that is a methodology note, not data. What must never appear is a key
+    # carrying per-frame values, a path, or a filename.
+    def all_keys(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                yield k
+                yield from all_keys(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                yield from all_keys(v)
+
+    keys = set(all_keys(payload))
+    for forbidden in ("eye_ratio", "head_tilt", "body_tilt", "looking_up",
+                      "hand_on_table", "phone_detected", "clip_id",
+                      "session_id", "video_path", "raw_rows", "frames"):
+        assert forbidden not in keys, f"payload has a {forbidden!r} key"
+
+    # and no media signatures anywhere
+    for signature in ("base64", "data:image", ".mp4", ".avi", ".jpg", ".png"):
+        assert signature not in blob, f"payload leaked {signature!r}"
+
+    # and the things it should carry are present
+    assert payload["schema"] == "proctor.metrics/1"
+    assert payload["models"]["hybrid"]["accuracy"] == 0.9
+    assert payload["dataset"]["n_frames"] == 500
+    assert "environment" in payload
+
+
+def test_telemetry_is_off_by_default():
+    import telemetry
+    assert telemetry.resolve(None, None)[0] in ("", None) or \
+        telemetry.resolve(None, None)[0] == __import__("os").environ.get(
+            telemetry.ENV_URL, "")
+    r = telemetry.maybe_send({"dataset": {}, "models": {}}, url="", token="")
+    assert r["sent"] is False
+    assert r["detail"] == "telemetry disabled"
+
+
+def test_telemetry_refuses_plain_http_without_opt_in():
+    import telemetry
+    assert telemetry.check("http://example.com/x") is not None
+    assert telemetry.check("http://example.com/x", allow_http=True) is None
+    assert telemetry.check("https://example.com/x") is None
+    assert telemetry.check("ftp://example.com/x") is not None
+
+
+def test_telemetry_dry_run_transmits_nothing():
+    import telemetry
+    payload = telemetry.build_payload({"dataset": {}, "models": {}})
+    r = telemetry.send(payload, "https://example.invalid/x", dry_run=True, quiet=True)
+    assert r["sent"] is False
+    assert r["detail"] == "dry run"
+
+
+def test_telemetry_never_raises_on_a_dead_endpoint():
+    """A network failure must not take the evaluation down with it."""
+    import telemetry
+    payload = telemetry.build_payload({"dataset": {}, "models": {}})
+    r = telemetry.send(payload, "https://127.0.0.1:9/nothing-here",
+                       timeout=2.0, quiet=True)
+    assert r["sent"] is False
+    assert r["status"] is None

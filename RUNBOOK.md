@@ -35,41 +35,150 @@ Learned the hard way on this project. All three have already caused real damage.
 | Need | Notes |
 |---|---|
 | Windows 10/11, 64-bit | |
-| **Python 3.11** | Required. The MediaPipe pin (`0.10.21`) has cp39–cp312 wheels, and 3.11 is what this pipeline is verified on. 3.12 would also work; 3.13+ will not. |
-| **uv** | `powershell -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
-| A webcam | Any. A laptop camera is fine. |
-| ~5 GB free disk | The recorder checks this itself and refuses to start below 2 GB. |
-| Git | To clone the branch. |
+| **Python 3.11** | Required. The MediaPipe pin (`0.10.21`) ships cp39–cp312 wheels; 3.11 is what this pipeline is verified on. 3.12 also works. **3.13+ will not.** `uv` can install it for you — see below. |
+| **uv** | the package and environment manager |
+| Git | to clone the branch |
+| A webcam | any; a laptop camera is fine |
+| ~5 GB free disk | the recorder checks this itself and refuses below 2 GB |
 
-**Camera permission is a separate Windows setting.** If capture fails:
+**Camera permission is a separate Windows setting**, and it is the single most
+common failure. It looks like a code error but is not. If capture fails:
 `Settings → Privacy & security → Camera → let desktop apps access your camera`.
-This is the single most common failure and it looks like a code error but is not.
 
 ---
 
-## 2. One-time setup
+## 2. Installation, step by step
+
+Open **PowerShell** (not cmd). Run these in order.
+
+### 2.1 Install uv
 
 ```powershell
-git clone <repo>
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Close and reopen PowerShell so the new `PATH` takes effect, then confirm:
+
+```powershell
+uv --version
+```
+
+### 2.2 Install Python 3.11 through uv
+
+You do **not** need to install Python separately — uv manages its own copies,
+which avoids the classic Windows problem of a Python that is installed but not
+on `PATH`.
+
+```powershell
+uv python install 3.11
+uv python list          # 3.11 should now appear as installed
+```
+
+*(If you prefer the system installer instead: `winget install --id
+Python.Python.3.11 -e`, and **tick "Add python.exe to PATH"** in the installer.
+uv will still find it.)*
+
+### 2.3 Install Git
+
+```powershell
+winget install --id Git.Git -e
+```
+
+Close and reopen PowerShell, then `git --version` to confirm.
+
+### 2.4 Get the code
+
+```powershell
+cd $HOME\Documents
+git clone <repo-url> zoya-python-project
 cd zoya-python-project
 git checkout feat/icaic2026-eval-pipeline
+```
+
+Keep the path short. Windows still has a 260-character path limit in places, and
+deeply nested folders plus a virtual environment can trip it.
+
+### 2.5 Build the environment
+
+```powershell
 uv sync --extra detect
 ```
 
-Then confirm the environment before trusting it:
+`--extra detect` pulls the detector stack: OpenCV, MediaPipe, Ultralytics and
+PyTorch. **This is a large download (~1 GB) and can take several minutes.**
+PyTorch alone is a few hundred MB. It only happens once.
+
+If you have an NVIDIA GPU, uv fetches the CUDA build of PyTorch automatically
+and `--device auto` will use it. If not, it runs on CPU and everything still
+works — just slower.
+
+### 2.6 Verify before trusting anything
+
+Three commands. **Do not proceed if any of them fails.**
 
 ```powershell
-uv run python scripts/rule_score.py     # expect: OK: agrees with exam.py
-uv run pytest -q                        # expect: 38 passed
-uv run python scripts/sysutil.py        # prints platform and chosen device
+uv run python scripts/rule_score.py
+```
+Expect exactly: `OK: rule_score.py agrees with exam.py on every threshold and constant.`
+This confirms the scoring thresholds match the original implementation.
+
+```powershell
+uv run pytest -q
+```
+Expect: `43 passed`. This exercises the feature maths, the score assembly, the
+extractor, the evaluation harness, the head-pose solver and the telemetry guard.
+
+```powershell
+uv run python scripts/sysutil.py
+```
+Prints the platform, the chosen inference device, free disk, and **checks the
+camera**. If it reports the camera could not be opened, it also tells you which
+Windows setting to change.
+
+Once those three pass, the environment is sound and everything after this is
+mechanical.
+
+### 2.7 Optional: outbound telemetry
+
+Lets the machine POST its metrics straight to you when `eval.py` finishes, so
+the numbers reach you without a round trip. **Entirely optional** — skip it and
+the files still get written locally and sent by hand.
+
+**First run will offer to set this up** and write a `.env`. Or do it explicitly:
+
+```powershell
+uv run python scripts/eval.py --telemetry-setup
 ```
 
-If `pytest` passes, the environment is sound. Do not proceed otherwise.
+It asks for a URL and a token, writes `.env`, and prints where. `.env` is
+gitignored, so the token never enters the repository — **share the token with the
+operator separately, never in the repo or in a commit**.
 
-**On device selection:** `--device auto` prefers CUDA, then Apple MPS, then CPU.
-On this machine that means an NVIDIA GPU will be used automatically. Check what
-was chosen in the run output (`device cuda` / `device cpu`) and note it in the
-session summary — the paper must state which hardware produced the numbers.
+Or set it by hand for the session:
+
+```powershell
+$env:PROCTOR_TELEMETRY_URL = "https://your-endpoint/ingest"
+$env:PROCTOR_TELEMETRY_TOKEN = "your-secret"
+```
+
+Check what would be sent, transmitting nothing:
+
+```powershell
+uv run python scripts/eval.py --telemetry-dry-run
+```
+
+**What it sends:** metrics and environment metadata only.
+**What it never sends:** video, frames, the per-frame feature table, filenames,
+paths. There is a test that enforces this.
+
+**If it fails, the evaluation still succeeds.** A dead endpoint, a wrong token or
+no network at all are logged and ignored — the run is never lost.
+
+Where to host the receiving end, and what survives your machine being off, is
+covered in **`TELEMETRY_HOSTING.md`**. The short version: a tunnel (ngrok,
+cloudflared) dies when your machine sleeps, so for an unattended run use
+something that is not your machine — `webhook.site` for a one-off, a Cloudflare
+Worker for something permanent.
 
 ---
 
@@ -159,6 +268,16 @@ uv run python scripts/extract_features.py --imgsz 320 --stride-phone 5 --stride-
 ```powershell
 uv run python scripts/eval.py
 ```
+
+**Pass the device that `extract_features` reported**, so the telemetry record
+states which hardware produced the numbers — the paper has to say:
+
+```powershell
+uv run python scripts/eval.py --device cuda --run-label "windows-box-run1"
+```
+
+`--device auto` (used during extraction) prefers **CUDA**, then Apple MPS, then
+CPU, so an NVIDIA machine uses its GPU automatically.
 
 Writes `data/results.json`. Prints four baselines:
 

@@ -281,6 +281,29 @@ def main():
     ap.add_argument("--selftest", action="store_true",
                     help="run on synthetic data in a temp dir; proves the pipeline works "
                          "and never writes into data/")
+
+    # --- optional outbound telemetry (off unless asked for) -----------------
+    ap.add_argument("--telemetry-url", default="",
+                    help="POST the metrics here when done. Also settable via the "
+                         "PROCTOR_TELEMETRY_URL environment variable. Metrics and "
+                         "environment only - never video, frames or filenames")
+    ap.add_argument("--telemetry-token", default="",
+                    help="bearer token, or set PROCTOR_TELEMETRY_TOKEN. Keep it out "
+                         "of the repository")
+    ap.add_argument("--telemetry-dry-run", action="store_true",
+                    help="print exactly what would be sent, transmit nothing")
+    ap.add_argument("--telemetry-allow-http", action="store_true",
+                    help="permit a plain http:// endpoint - for local testing only")
+    ap.add_argument("--telemetry-setup", action="store_true",
+                    help="interactively write .env with the endpoint and token")
+    ap.add_argument("--no-telemetry-prompt", action="store_true",
+                    help="never prompt to configure telemetry (for unattended runs)")
+    ap.add_argument("--run-label", default="",
+                    help="free-text label for this run, included in the telemetry")
+    ap.add_argument("--device", default="",
+                    help="inference device that produced the dataset, for the "
+                         "telemetry record (e.g. cuda / mps / cpu). extract_features "
+                         "prints it")
     args = ap.parse_args()
 
     if args.selftest:
@@ -350,6 +373,25 @@ def main():
         if "accuracy" in m:
             auc = f"{m['roc_auc']:.3f}" if m.get("roc_auc") is not None else "n/a"
             print(f"  {k:32} acc={m['accuracy']:.4f} f1={m['f1']:.4f} auc={auc}")
+
+    # ---- optional outbound telemetry --------------------------------------
+    # Off unless a URL is configured. Never fails the run, and never sends
+    # anything beyond metrics and environment metadata.
+    import telemetry
+    # load .env (gitignored), and on a first interactive run offer to create it
+    u = telemetry.ensure_configured(
+        force_setup=args.telemetry_setup,
+        interactive=not args.no_telemetry_prompt)
+    t = telemetry.resolve(args.telemetry_token, None)[1]
+    if u or args.telemetry_dry_run:
+        print()
+        res["_telemetry"] = telemetry.maybe_send(
+            res, url=args.telemetry_url, token=args.telemetry_token,
+            dry_run=args.telemetry_dry_run, allow_http=args.telemetry_allow_http,
+            run_label=args.run_label, device=args.device)
+    else:
+        print("\n  telemetry: disabled (set --telemetry-url or "
+              "PROCTOR_TELEMETRY_URL to enable)")
     return 0
 
 
