@@ -5,5 +5,30 @@ __pycache__/
 .env
 node_modules/
 
-# recorded clips are large; keep them out of git
+# ---------------------------------------------------------------------------
+# RECORDED MEDIA - must never be committed, pushed or shipped.
+#
+# These folders contain video and telemetry of real people. They are excluded
+# from version control so that neither we nor the publication partner can
+# accidentally distribute them. See RECORDING_SPEC.md and HANDOVER.md.
+#
+# Session bundles (video + telemetry) are written by scripts/live_session.py.
+# ---------------------------------------------------------------------------
+data/sessions/
 data/clips/
+data/oep/
+data/media/
+
+# belt and braces: ignore any recorded media anywhere in the tree, so a clip
+# saved to the wrong path still cannot be committed
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.m4v
+*.wav
+*.webm
+
+# derived numbers stay trackable (no media, small, and the paper cites them)
+!data/results.json
+!data/dataset_labelled.csv

@@ -1,5 +1,12 @@
 # Evaluation pipeline (ICAIC 2026 revision, paper 604)
 
+> **Where the rest of this work lives.** The manuscript side of the revision —
+> the revised `.docx`, the response-to-reviewers letter, the figure sources, the
+> clip recording protocol, and a full handover of what has been done and which
+> problems were solved how — is in
+> `/Users/ammar/Data/zoya paper/ICAIC-2026-revision/`.
+> Start with **`HANDOVER.md`** there, then `README.md` for the live status.
+
 This branch adds a reproducible evaluation path for the paper, in response to
 Reviewer #1's two statistical objections and Reviewer #4's documentation
 requirements.
