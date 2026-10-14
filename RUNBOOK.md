@@ -18,7 +18,13 @@ Once the clips exist, steps 2–5 are five commands and no decisions.
 
 ---
 
-## 0. Before anything: what NOT to do
+## 0. Before anything
+
+> **If you are an agent assisting the operator, read `AGENTS.md` first.** It
+> covers the repo, the goal, the end-to-end journey and your role at each stage.
+> This runbook is the operator's procedure; `AGENTS.md` is how to drive it.
+
+### What NOT to do
 
 Learned the hard way on this project. All three have already caused real damage.
 
