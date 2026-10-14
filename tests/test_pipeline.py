@@ -336,3 +336,63 @@ def test_eval_rejects_a_single_session_for_grouped_cv():
     ])
     with pytest.raises(ValueError):
         ev.evaluate(df)
+
+
+# --------------------------------------------------------------------------
+# head pose (scripts/analyse_video.py)
+# --------------------------------------------------------------------------
+def _rot(pitch, yaw, roll):
+    import math
+    p, y, r = map(math.radians, (pitch, yaw, roll))
+    Rx = np.array([[1, 0, 0], [0, math.cos(p), -math.sin(p)], [0, math.sin(p), math.cos(p)]])
+    Ry = np.array([[math.cos(y), 0, math.sin(y)], [0, 1, 0], [-math.sin(y), 0, math.cos(y)]])
+    Rz = np.array([[math.cos(r), -math.sin(r), 0], [math.sin(r), math.cos(r), 0], [0, 0, 1]])
+    return Rz @ Ry @ Rx
+
+
+@pytest.mark.parametrize("pitch,yaw,roll", [
+    (0, 0, 0), (0, 20, 0), (0, -20, 0), (20, 0, 0), (-20, 0, 0),
+    (0, 0, 20), (0, 0, -25), (10, 15, -10), (0, 35, 0), (0, -30, 10),
+])
+def test_head_pose_recovers_known_rotation(pitch, yaw, roll):
+    """
+    Project a known rotation through the model and check it is recovered.
+
+    This exists because the first version of head_pose had **pitch and yaw
+    swapped**, which produced a table of plausible-looking but wrong angles.
+    A synthetic ground-truth test is the only thing that catches that class of
+    bug, so it stays.
+    """
+    import cv2
+    import analyse_video as av
+
+    w, h = 1280, 720
+    cam = np.array([[float(w), 0, w / 2], [0, float(w), h / 2], [0, 0, 1]], dtype=np.float64)
+    rvec, _ = cv2.Rodrigues(_rot(pitch, yaw, roll))
+    proj, _ = cv2.projectPoints(av.MODEL_POINTS, rvec,
+                                np.array([[0.0], [0.0], [600.0]]), cam, np.zeros((4, 1)))
+    pts = {av.LANDMARK_IDS[i]: tuple(x) for i, x in enumerate(proj.reshape(-1, 2))}
+    landmarks = [pts.get(i, (0, 0)) for i in range(468)]
+
+    out = av.head_pose(landmarks, w, h)
+    assert out is not None, "a clean synthetic pose must not be rejected"
+    p, y, r, err, _ = out
+    assert abs(p - pitch) < 2, f"pitch {p:.1f} != {pitch}"
+    assert abs(y - yaw) < 2, f"yaw {y:.1f} != {yaw}"
+    assert abs(r - roll) < 2, f"roll {r:.1f} != {roll}"
+    assert err < 1.0
+
+
+def test_head_pose_rejects_implausible():
+    """A pose beyond the model's validity must be rejected, not reported."""
+    import analyse_video as av
+    # nose where the chin should be: not a face
+    landmarks = [(0, 0)] * 468
+    landmarks[1] = (100, 100)
+    landmarks[152] = (100, 90)
+    landmarks[33] = (60, 60)
+    landmarks[263] = (140, 60)
+    landmarks[61] = (80, 130)
+    landmarks[291] = (120, 130)
+    out = av.head_pose(landmarks, 1280, 720)
+    assert out is None or abs(out[0]) < av.MAX_ABS_PITCH

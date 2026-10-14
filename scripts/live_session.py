@@ -510,6 +510,7 @@ def main():
     print("  " + "-" * 92)
 
     trace, scores = [], []
+    cheating_start = None
     frames = detected = faces = 0
     det_times: list[float] = []
     fires = {k: 0 for k in ("eye_ratio", "head_tilt", "body_tilt", "looking_up",
@@ -539,8 +540,22 @@ def main():
                 detected += 1
                 if last["face"]:
                     faces += 1
+                # Duration accrual, exactly as exam.py does it: the timer runs
+                # while a suspicious state is active (>=2 indicators, or a phone)
+                # and resets otherwise. Without this the alpha*Tt term of Eq. (2)
+                # is silently zero and a phone alone (+40) can never reach the
+                # 60 decision line, so sustained cheating is under-scored.
+                active = last["suspicious_count"] >= 2 or bool(last["phone_detected"])
+                if active:
+                    if cheating_start is None:
+                        cheating_start = time.time()
+                    duration = time.time() - cheating_start
+                else:
+                    cheating_start = None
+                    duration = 0.0
+
                 raw = rs.raw_score(last["suspicious_count"],
-                                   last["phone_detected"], 0.0)
+                                   last["phone_detected"], duration)
                 scores.append(raw)
                 smoothed = rs.smooth(scores)[-1]
                 decision = rs.hybrid_decision(smoothed, 0)
@@ -554,13 +569,14 @@ def main():
                 for k in ("body_tilt", "looking_up", "hand_on_table", "phone_detected"):
                     if last[k]:
                         fires[k] += 1
-                logf.write(json.dumps(dict(
-                    t=round(time.time() - t_start, 3), frame=frames,
-                    **{k: last[k] for k in ("face", "eye_ratio", "head_tilt",
-                                            "body_tilt", "looking_up",
-                                            "hand_on_table", "phone_detected",
-                                            "suspicious_count")},
-                    raw_score=raw, smoothed_score=smoothed, decision=decision)) + "\n")
+                rec = dict(t=round(time.time() - t_start, 3), frame=frames,
+                           **{k: last[k] for k in ("face", "eye_ratio", "head_tilt",
+                                                   "body_tilt", "looking_up",
+                                                   "hand_on_table", "phone_detected",
+                                                   "suspicious_count")},
+                           raw_score=raw, smoothed_score=smoothed,
+                           decision=decision, duration=round(duration, 3))
+                logf.write(json.dumps(rec) + "\n")
                 if detected % 50 == 0:
                     logf.flush()
                 if MIN_DETECT_INTERVAL:
