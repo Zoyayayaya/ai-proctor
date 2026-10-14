@@ -174,11 +174,53 @@ paths. There is a test that enforces this.
 **If it fails, the evaluation still succeeds.** A dead endpoint, a wrong token or
 no network at all are logged and ignored — the run is never lost.
 
-Where to host the receiving end, and what survives your machine being off, is
-covered in **`TELEMETRY_HOSTING.md`**. The short version: a tunnel (ngrok,
-cloudflared) dies when your machine sleeps, so for an unattended run use
-something that is not your machine — `webhook.site` for a one-off, a Cloudflare
-Worker for something permanent.
+### Where the receiving end lives
+
+**Already set up.** A webhook.site endpoint has been created and verified:
+
+```
+PROCTOR_TELEMETRY_URL=https://webhook.site/6cecbbcd-8f9a-4096-8b47-fa9c9310d276
+```
+
+Put that one line in `.env` (the token field can stay blank — webhook.site needs
+no auth) and the metrics appear in the browser at that URL as soon as `eval.py
+finishes. Verified end to end: a real POST was delivered and read back.
+
+**Two things to know about it:**
+
+1. **It expires on 2026-10-21.** Anonymous webhook.site URLs last seven days,
+   which is their maximum. If the run happens later, the POST fails — the
+   evaluation still succeeds and the files are still on disk, you just do not get
+   the live copy. Either run before then, or register a free webhook.site account
+   and associate the URL to keep it.
+2. **Anyone with that URL can read what arrives.** It contains metrics and
+   version strings only — no video, no frames, no names — so it is not sensitive,
+   but do not post the URL publicly.
+
+**Why not a tunnel?** `ngrok` and `cloudflared` are proxies to a process on your
+own machine, so the URL dies when that machine sleeps. The run happens at a time
+nobody controls, so a tunnel would mean losing the result whenever you are not
+awake with it running. webhook.site is a real server and does not care whether
+your laptop is on.
+
+**If you want an email when a run lands:** webhook.site gives every token a real
+email address (`<uuid>@email.webhook.site`) and it does receive mail — verified,
+an email sent to it arrived in the inbox with the sender and subject intact.
+
+But that is the *inbound* direction. Forwarding a received request onward to your
+own email needs their **Custom Actions** feature, which is a paid tier (our token
+reports `premium: false, actions: false`). So on the free tier you get the data
+by opening the URL, not by email.
+
+**How the email path was verified anyway:** the metrics were sent to
+`akidwai03@gmail.com` over SMTP as a formatted summary — all four baselines, the
+confusion matrix and the ablation table. That confirms notification works; it
+just is not something the free webhook tier does for you.
+
+**If automatic email matters later**, the options are: upgrade webhook.site to
+Basic (~$7.50/month) and add a Custom Action that forwards to your address, or
+add an SMTP step to the sender (needs an app password on the Windows machine, and
+SMTP from arbitrary hosts is often filtered — more fragile than the POST).
 
 ---
 
