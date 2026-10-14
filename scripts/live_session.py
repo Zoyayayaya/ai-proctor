@@ -91,7 +91,8 @@ STOP = {"flag": False, "reason": ""}
 # --------------------------------------------------------------------------
 # resource helpers
 # --------------------------------------------------------------------------
-from sysutil import (free_gb, open_camera, open_writer,  # noqa: E402
+from sysutil import (camera_failure_report, free_gb, open_camera,  # noqa: E402
+                     open_writer,
                      peak_rss_mb, pick_device)
 
 
@@ -298,13 +299,22 @@ def start_web(state: LiveState, port: int) -> str:
     return f"http://127.0.0.1:{port}"
 
 
-def permission_help():
+def permission_help(index: int = 0, where: str = "live_session"):
+    """Explain a camera failure AND report it, so it can be fixed remotely."""
     print("\n  Could not open the camera.\n")
-    print("  On macOS this is a permission issue, not a code one. OpenCV says")
-    print('  "not authorized to capture video" when the app is not allowed.\n')
-    print("    System Settings > Privacy & Security > Camera")
-    print("      -> enable the app you launched this from")
-    print("      -> fully QUIT and reopen that app, then run this again\n")
+    print("  This is almost always a permission issue, not a code problem.\n")
+    if sys.platform.startswith("win"):
+        print("    Settings > Privacy & security > Camera")
+        print("      -> turn on 'let desktop apps access your camera'")
+        print("      -> then fully close and reopen this terminal")
+        print("      -> and check no other app (Teams, Zoom, Camera) is using it")
+    else:
+        print("    System Settings > Privacy & Security > Camera")
+        print("      -> enable the app you launched this from")
+        print("      -> fully QUIT and reopen that app, then run this again")
+    print()
+    r = camera_failure_report(where, index)
+    print(f"  Reported: {'sent' if r.get('sent') else r.get('detail')}\n")
 
 
 def build_detector(device, imgsz, half, stride_map):
@@ -424,7 +434,7 @@ def main():
 
     cap = open_camera(args.camera, args.width, args.height, args.fps)
     if cap is None:
-        permission_help()
+        permission_help(args.camera, "live_session")
         return 1
 
     stamp = args.out or datetime.now().strftime("%Y-%m-%d_%H%M%S")

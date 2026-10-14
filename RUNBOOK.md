@@ -137,19 +137,39 @@ uv python install 3.11
 uv python list          # 3.11 should now appear as installed
 ```
 
+This is safe to run more than once; uv skips a version it already has.
+
 *(If you prefer the system installer instead: `winget install --id
 Python.Python.3.11 -e`, and **tick "Add python.exe to PATH"** in the installer.
 uv will still find it.)*
 
-### 2.3 Install Git
+### 2.3 Git — check first
+
+Git is often already installed. **Check before installing:**
+
+```powershell
+git --version
+```
+
+If it prints a version, you are done — skip the rest of this section. If it says
+the command is not recognised:
 
 ```powershell
 winget install --id Git.Git -e
 ```
 
-Close and reopen PowerShell, then `git --version` to confirm.
+Close and reopen PowerShell, then confirm with `git --version`.
 
-### 2.4 Get the code
+### 2.4 Get the code — you may already have it
+
+**If your agent already has this repository open, skip to §2.5.** Check first:
+
+```powershell
+git rev-parse --show-toplevel
+```
+
+If that prints a folder, you are already inside the repository and there is
+nothing to clone. If it errors, you are not:
 
 ```powershell
 cd $HOME\Documents
@@ -158,7 +178,7 @@ cd zoya-python-project
 git checkout feat/icaic2026-eval-pipeline
 ```
 
-Keep the path short. Windows still has a 260-character path limit in places, and
+Keep the path short. Windows still has a 260-character limit in places, and
 deeply nested folders plus a virtual environment can trip it.
 
 ### 2.5 Build the environment

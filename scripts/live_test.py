@@ -40,7 +40,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rule_score as rs  # noqa: E402
 from rule_score import PHONE_CLASS_ID, PHONE_CONF  # noqa: E402
-from sysutil import open_camera, open_writer  # noqa: E402
+from sysutil import camera_failure_report, open_camera, open_writer  # noqa: E402
 import telemetry  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -157,9 +157,35 @@ def annotate(frame, f, score, decision):
 
 
 # --------------------------------------------------------------------------
+def camera_failed(where: str = "live_test", index: int = 0) -> None:
+    """
+    Explain a camera failure to the operator AND report it.
+
+    The explanation is for the person in the room; the report is for whoever is
+    watching the endpoint, so the cause can be diagnosed and a fix shipped
+    without a second session.
+    """
+    print("\n  Could not open the camera.\n")
+    print("  This is almost always a permission issue, not a code problem.\n")
+    if sys.platform.startswith("win"):
+        print("    Settings > Privacy & security > Camera")
+        print("      -> turn on 'let desktop apps access your camera'")
+        print("      -> then fully close and reopen this terminal")
+        print("      -> and check no other app (Teams, Zoom, Camera) is using it")
+    else:
+        print("    System Settings > Privacy & Security > Camera")
+        print("      -> enable the app you launched this from")
+        print("      -> fully quit and reopen that app, then try again")
+    print()
+    r = camera_failure_report(where, index)
+    print(f"  Reported: {'sent - the failure and its context are on their way' if r.get('sent') else r.get('detail')}")
+    print("  Nobody needs to debug this here; a fix can come back to you.\n")
+
+
 def live_test(args):
     cap = open_camera(CAM_INDEX, WIDTH, HEIGHT, 15.0)
     if cap is None:
+        camera_failed("live_test", CAM_INDEX)
         return 1
     fm, hd, ps, yolo = build_detectors()
     hist, scores, indicators = [], [], defaultdict(int)
@@ -260,6 +286,7 @@ def record(args):
     import cv2
     cap = open_camera(CAM_INDEX, WIDTH, HEIGHT, 15.0)
     if cap is None:
+        camera_failed("live_test.record", CAM_INDEX)
         return 1
     CLIPS_DIR.mkdir(parents=True, exist_ok=True)
     # codec chosen by sysutil.open_writer with a fallback chain

@@ -82,6 +82,68 @@ def free_gb(path) -> float:
 # --------------------------------------------------------------------------
 # camera
 # --------------------------------------------------------------------------
+def camera_failure_report(where: str, index: int, detail: dict | None = None) -> dict:
+    """
+    Report a camera failure with everything needed to diagnose it remotely.
+
+    A camera that will not open is the most likely thing to go wrong on the
+    client machine, and it is almost always a Windows privacy setting rather
+    than a code problem. Reporting it with the platform, the index tried, the
+    OpenCV version and the exact setting to change means it can be diagnosed and
+    answered without a second session.
+
+    Includes a traceback so the failure has a location, not just a message.
+    """
+    import traceback
+    try:
+        import cv2
+        cv_ver = cv2.__version__
+    except Exception:
+        cv_ver = "unavailable"
+
+    d = dict(detail or {})
+    d.update({
+        "where": where,
+        "camera_index": index,
+        "platform": sys.platform,
+        "python": sys.version.split()[0],
+        "opencv": cv_ver,
+        "backends_tried": ([f"CAP_DSHOW", "CAP_MSMF", "CAP_ANY"] if IS_WINDOWS
+                           else ["CAP_ANY"]),
+        "error": f"camera {index} could not be opened",
+        "error_type": "CameraUnavailable",
+    })
+    if IS_WINDOWS:
+        d["likely_cause"] = ("Windows camera privacy setting, or another "
+                             "application holding the camera")
+        d["guidance"] = ("Settings > Privacy & security > Camera > let desktop "
+                         "apps access your camera. Then fully close and reopen "
+                         "the terminal, and check no other app (Teams, Zoom, "
+                         "Camera) is using it.")
+    else:
+        d["likely_cause"] = "no camera, or permission not granted to the terminal app"
+        d["guidance"] = ("Grant camera access to the terminal application in "
+                         "System Settings > Privacy & Security > Camera, then "
+                         "restart the terminal.")
+
+    # a synthetic trace so the report carries a location rather than a bare string
+    try:
+        raise RuntimeError(d["error"])
+    except RuntimeError:
+        d["traceback_tail"] = traceback.format_exc()[-800:]
+
+    try:
+        import telemetry
+        return telemetry.report("error", d, enabled=_telemetry_enabled())
+    except Exception:
+        return {"sent": False, "detail": "reporting unavailable"}
+
+
+def _telemetry_enabled() -> bool:
+    """Honour --no-telemetry when a script was launched with it."""
+    return "--no-telemetry" not in sys.argv
+
+
 def open_camera(index: int, width: int, height: int, fps: float):
     """
     Open a webcam with platform-appropriate settings.
@@ -175,6 +237,9 @@ if __name__ == "__main__":
             print("  camera         : could NOT be opened")
             print("                   on Windows this is usually the privacy setting:")
             print("                   Settings > Privacy & security > Camera")
+            r = camera_failure_report("sysutil.camera_check", 0)
+            print(f"                   reported to the endpoint: "
+                  f"{'yes' if r.get('sent') else r.get('detail')}")
         else:
             ok, fr = cap.read()
             print(f"  camera         : OK, frame {None if not ok else fr.shape}")

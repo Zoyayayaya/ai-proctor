@@ -72,21 +72,39 @@ tests/       46 tests. `uv run pytest -q` must pass
 
 Follow `RUNBOOK.md` §2. The order is:
 
+**Check before installing anything.** Several of these are likely already
+present, and installing over a working tool wastes time and can confuse `PATH`.
+
 ```powershell
-# uv, then Python through uv (avoids the installed-but-not-on-PATH trap)
+# uv - check first
+uv --version
+# only if that fails:
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-# close and reopen PowerShell, then:
+# then close and reopen PowerShell, because PATH is read at startup
+
+# Python 3.11 through uv - no separate Python install needed
 uv python install 3.11
+
+# git - check first, do not install over a working one
+git --version
+# only if that fails:
 winget install --id Git.Git -e
 
-# get the code
+# the code - you may ALREADY be in the repository.
+# Ask the agent, or check:
+git rev-parse --show-toplevel        # prints the repo root if you are inside one
+# only if that fails:
 git clone <repo-url> zoya-python-project
 cd zoya-python-project
 git checkout <the branch you were given>
 
-# the environment - ~1 GB, several minutes
+# the environment - ~1 GB, several minutes. This is the slow part.
 uv sync --extra detect
 ```
+
+> **If the agent already has this repository open, do not clone it again.** `cd`
+> into a folder that may not exist is a common way to lose five minutes to a
+> confusing error. The `git rev-parse` check above settles it.
 
 **Then verify. Do not skip and do not proceed if any of these fails:**
 
@@ -101,6 +119,11 @@ and it says so. **It is not a code problem.**
 
 **Your role:** run these with them, read the output, stop on anything unexpected.
 A 1 GB download is the slowest part; tell them that so they do not think it hung.
+
+**If the camera check fails**, it is almost always the Windows privacy setting and
+the output says so. The failure also reports itself, with the platform, the
+camera index, the OpenCV version and a traceback, so a fix can be worked out
+remotely. You do not need to debug it there.
 
 ### Stage 2 — Pilot clip (~2 min) — do not skip this
 
@@ -200,9 +223,36 @@ the code. The operator does not need to think about it.
 | `error` | on any failure, with error type, message and traceback tail |
 
 **No `clip_recorded` events means nothing is being recorded.** An `error` event
-carries enough to act on.
+carries the error type, the message and a traceback tail.
 
 If asked to turn it off: `--no-telemetry` on any script.
+
+### Marking progress yourself
+
+The pipeline reports the machine's half. You can report yours, so the whole
+session is visible rather than only the automatic parts:
+
+```powershell
+# a note
+uv run python scripts/telemetry_report.py note "pilot clip done, framing good"
+
+# structured progress
+uv run python scripts/telemetry_report.py progress --stage recording --done 5 --of 24
+
+# a stage finished
+uv run python scripts/telemetry_report.py stage --stage install --state done
+
+# something you noticed
+uv run python scripts/telemetry_report.py problem "check_clips failed twice on S4_p1_r2" --detail attempt=2
+```
+
+Event names are prefixed `agent_` automatically, so they are distinguishable from
+pipeline events. Encrypted with the same key, best-effort in the same way — a
+failed report never interrupts the work.
+
+**Use it at these moments:** after the environment checks pass, after the pilot
+clip is verified, when a re-record is needed and why, and any time you stop to
+ask a question.
 
 ## 6. Per-pose phrasing, and the one that looks wrong
 
