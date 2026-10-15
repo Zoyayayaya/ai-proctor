@@ -180,6 +180,7 @@ def fetch(url: str | None = None, limit: int = 100) -> list[dict]:
 
     items = payload.get("data", []) if isinstance(payload, dict) else []
     out = []
+    locked = 0                       # envelopes found but not readable
     for item in items[:limit]:
         body = item.get("content")
         if not body:
@@ -193,9 +194,22 @@ def fetch(url: str | None = None, limit: int = 100) -> list[dict]:
         try:
             msg = decrypt(obj, key)
         except Exception:
+            locked += 1
             continue                      # someone else's key
         msg["_at"] = item.get("created_at", "")
         out.append(msg)
+
+    # An unreadable message is worse than a missing one: it looks like silence,
+    # and silence is indistinguishable from "nothing happened". This bit us once
+    # already - a message from the operator sat on the endpoint while `poll`
+    # reported "nothing new" - so it is reported rather than skipped.
+    if locked:
+        print()
+        print(f"  {locked} message(s) on the endpoint could NOT be decrypted.")
+        print("  That is almost always a key mismatch, not corruption.")
+        print("  Check the key on both sides before assuming nothing was sent:")
+        print("    uv run python scripts/telemetry_report.py --show")
+        print()
     return out
 
 

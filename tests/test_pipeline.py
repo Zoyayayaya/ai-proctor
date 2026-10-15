@@ -690,3 +690,118 @@ def test_endpoint_expiry_constants_are_valid_dates():
         y, m, d = (int(x) for x in s.split("-"))
         date(y, m, d)                      # raises if malformed
         assert len(s) == 10 and s[4] == "-" and s[7] == "-"
+
+
+# --------------------------------------------------------------------------
+# comms: a message we cannot read must be announced, never skipped
+# --------------------------------------------------------------------------
+def test_a_wrong_key_cannot_read_a_message():
+    """
+    The invariant that made the operator's first message invisible: a payload
+    encrypted under one key is unreadable under another, and a single differing
+    character is enough to do it.
+
+    Dummy keys on purpose. The real key must never be written down in anything
+    that gets committed - it belongs in .env and nowhere else.
+    """
+    import pytest
+    import telemetry_crypto as tc
+
+    right = "sample-key-abcdef"
+    nearly = "sample-key-abcdee"            # differs by one character
+    env = tc.encrypt({"schema": "proctor.comms/1", "body": "hello"}, right)
+    assert tc.decrypt(env, right)["body"] == "hello"
+    with pytest.raises(Exception):
+        tc.decrypt(env, nearly)
+    with pytest.raises(Exception):
+        tc.decrypt(env, "")
+
+
+def test_the_real_key_never_appears_in_a_tracked_file():
+    """
+    The key belongs in .env and nowhere else.
+
+    This guards a real leak: the key was once written into a test as a literal
+    and pushed. The repo is the wrong place for it - anyone who can read the
+    repo can then read every report and message.
+
+    Reads the key from .env rather than naming it here, so the check itself
+    never contains it. Skipped where no key is configured.
+    """
+    import subprocess
+    from pathlib import Path
+
+    import telemetry
+
+    telemetry.load_env_file()
+    key = telemetry.resolve_key()
+    if not key or len(key) < 6:
+        pytest.skip("no usable key in .env on this machine")
+
+    root = Path(__file__).resolve().parent.parent
+    try:
+        tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
+                                 text=True, timeout=30).stdout.split()
+    except Exception:
+        pytest.skip("not a git working tree")
+
+    offenders = []
+    for rel in tracked:
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if key in text:
+            offenders.append(rel)
+
+    assert not offenders, (
+        f"the key appears in tracked file(s): {offenders}. "
+        f"It belongs in .env only - remove it and rewrite the commit.")
+
+
+def test_comms_reports_unreadable_messages_instead_of_dropping_them(monkeypatch, capsys):
+    """
+    A message we cannot decrypt must be reported, not skipped.
+
+    This is the exact bug that hid the operator's first message. It arrived
+    encrypted under a slightly different key, `fetch` skipped it silently, and
+    `poll` printed "nothing new" - which is indistinguishable from "nothing was
+    sent". Silence and an unreadable message must not look the same.
+    """
+    import json as _json
+    import urllib.request
+
+    import comms
+    import telemetry_crypto as tc
+
+    good = tc.encrypt({"schema": "proctor.comms/1", "msg_id": "readable"}, "right")
+    bad = tc.encrypt({"schema": "proctor.comms/1", "msg_id": "locked"}, "wrong")
+
+    class _Resp:
+        def __init__(self, payload):
+            self._b = _json.dumps(payload).encode()
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        return _Resp({"data": [
+            {"content": _json.dumps(good), "created_at": "t2"},
+            {"content": _json.dumps(bad), "created_at": "t1"},
+        ]})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(comms.telemetry, "resolve_key", lambda: "right")
+
+    msgs = comms.fetch()
+    assert [m["msg_id"] for m in msgs] == ["readable"]      # readable one returned
+
+    out = capsys.readouterr().out
+    assert "could NOT be decrypted" in out                  # the other is announced
+    assert "key mismatch" in out
