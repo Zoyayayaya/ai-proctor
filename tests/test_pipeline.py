@@ -963,6 +963,31 @@ def test_check_clips_counts_phone_frames_only_when_a_model_is_present(tmp_path):
     assert with_model["phone_hits"] == with_model["phone_frames"]   # all hits
 
 
+def test_analyse_reports_brightness(tmp_path):
+    """
+    Brightness is the one number that settles an argument about lighting.
+
+    Without it, "the room is dim" is an opinion - which is exactly the position
+    this project was in: the claim was made twice and never measured. A known
+    grey frame must come back as that grey.
+    """
+    import cv2
+    import numpy as np
+
+    import check_clips
+
+    p = tmp_path / "S1_p1_r1.mp4"
+    vw = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (1280, 720))
+    for _ in range(20):
+        vw.write(np.full((720, 1280, 3), 100, np.uint8))     # flat grey 100
+    vw.release()
+
+    a = check_clips.analyse(p, stride=5, phone_model=None)
+    assert a["sampled"] > 0
+    # mp4v is lossy, so allow a little drift
+    assert 90 <= a["mean_brightness"] <= 110, a["mean_brightness"]
+
+
 def test_comms_reports_unreadable_messages_instead_of_dropping_them(monkeypatch, capsys):
     """
     A message we cannot decrypt must be reported, not skipped.

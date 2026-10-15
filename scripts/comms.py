@@ -60,6 +60,59 @@ COMMS_EXPIRES = "2026-10-22"
 
 SCHEMA = "proctor.comms/1"
 TIMEOUT = 15.0
+MAX_ATTACH = 1_000_000        # bytes, before base64. A 720p JPEG is ~80 KB.
+
+
+def load_attachments(paths: list[str]) -> tuple[list[dict], str]:
+    """
+    Read files into base64 attachments. Returns (attachments, error).
+
+    Base64 in the payload rather than a multipart upload because the endpoint is
+    a plain webhook: one JSON body, no upload API. It inflates the bytes by a
+    third, so the cap is deliberately low - this is for a screenshot or a still,
+    not for video.
+    """
+    import base64
+    import mimetypes
+
+    out = []
+    for p in paths:
+        f = Path(p)
+        if not f.is_file():
+            return [], f"{p} is not a file"
+        data = f.read_bytes()
+        if len(data) > MAX_ATTACH:
+            return [], (f"{f.name} is {len(data)/1024:.0f} KB - keep attachments "
+                        f"under {MAX_ATTACH//1024} KB")
+        out.append({
+            "name": f.name,
+            "mime": mimetypes.guess_type(f.name)[0] or "application/octet-stream",
+            "bytes": len(data),
+            "b64": base64.b64encode(data).decode("ascii"),
+        })
+    return out, ""
+
+
+def save_attachments(out_dir: str, all_messages: bool = False) -> int:
+    """Write every attachment found on the endpoint into out_dir."""
+    import base64
+
+    dest = Path(out_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for m in fetch():
+        for a in (m.get("detail") or {}).get("attachments") or []:
+            name = Path(a.get("name") or "attachment.bin").name   # no traversal
+            try:
+                (dest / name).write_bytes(base64.b64decode(a["b64"]))
+            except Exception as e:  # noqa: BLE001
+                print(f"  could not save {name}: {type(e).__name__}")
+                continue
+            print(f"  saved {dest / name}  ({a.get('bytes', 0)/1024:.0f} KB)")
+            written += 1
+    if not written:
+        print("  no attachments found")
+    return written
 
 
 def endpoint(explicit: str | None = None) -> str:
@@ -109,13 +162,23 @@ def save_state(st: dict) -> None:
 # send
 # --------------------------------------------------------------------------
 def send(body: str, subject: str = "", sender: str = "", detail: dict | None = None,
-         url: str | None = None, quiet: bool = False) -> dict:
+         url: str | None = None, quiet: bool = False,
+         attach: list[str] | None = None) -> dict:
     """Send one message. Best effort; never raises."""
     from telemetry_crypto import encrypt
 
     key = telemetry.ensure_key(interactive=sys.stdin.isatty())
     if not key:
         return {"sent": False, "detail": "no key; refusing to send in the clear"}
+
+    detail = dict(detail or {})
+    if attach:
+        atts, err = load_attachments(attach)
+        if err:
+            if not quiet:
+                print(f"  NOT sent: {err}")
+            return {"sent": False, "detail": err}
+        detail["attachments"] = atts
 
     msg = {
         "schema": SCHEMA,
@@ -124,7 +187,7 @@ def send(body: str, subject: str = "", sender: str = "", detail: dict | None = N
         "from": sender or os.environ.get("PROCTOR_COMMS_FROM", "operator"),
         "subject": subject,
         "body": body,
-        "detail": detail or {},
+        "detail": detail,
     }
     envelope = encrypt(msg, key)
 
@@ -234,8 +297,17 @@ def poll(all_messages: bool = False, url: str | None = None) -> list[dict]:
         print("  " + head)
         for line in (m.get("body") or "").splitlines():
             print("    " + line)
-        if m.get("detail"):
-            print(f"    ({json.dumps(m['detail'])[:160]})")
+        det = m.get("detail") or {}
+        atts = det.get("attachments") or []
+        rest = {k: v for k, v in det.items() if k != "attachments"}
+        if rest:
+            print(f"    ({json.dumps(rest)[:160]})")
+        for a in atts:
+            print(f"    [attachment] {a.get('name')}  "
+                  f"{a.get('bytes', 0)/1024:.0f} KB  {a.get('mime', '')}")
+        if atts:
+            print("    save it with: "
+                  "uv run python scripts/comms.py save-attachments --out DIR")
 
     st["seen"] = list(seen | {m.get("msg_id") for m in fresh if m.get("msg_id")})
     save_state(st)
@@ -266,9 +338,15 @@ def main() -> int:
     s.add_argument("--subject", default="")
     s.add_argument("--from", dest="sender", default="")
     s.add_argument("--detail", action="append", default=[])
+    s.add_argument("--attach", action="append", default=[], metavar="FILE",
+                   help="attach a file, base64 inside the encrypted payload. "
+                        "For a screenshot or a still - keep it under 1 MB")
 
     p = sub.add_parser("poll", help="show messages not seen before")
     p.add_argument("--all", action="store_true", help="show the whole history")
+
+    sv = sub.add_parser("save-attachments", help="write attachments to disk")
+    sv.add_argument("--out", required=True, metavar="DIR")
 
     w = sub.add_parser("watch", help="poll repeatedly")
     w.add_argument("--interval", type=float, default=20.0)
@@ -294,8 +372,12 @@ def main() -> int:
                 k, v = kv.split("=", 1)
                 detail[k.strip()] = v
         r = send(args.body, subject=args.subject, sender=args.sender,
-                 detail=detail, url=args.url or None)
+                 detail=detail, url=args.url or None, attach=args.attach or None)
         return 0 if r.get("sent") else 1
+
+    if args.cmd == "save-attachments":
+        save_attachments(args.out)
+        return 0
 
     if args.cmd == "poll":
         poll(all_messages=args.all, url=args.url or None)

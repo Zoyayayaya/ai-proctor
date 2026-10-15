@@ -127,6 +127,7 @@ def analyse(path: Path, stride: int, phone_model=None):
 
     sampled = with_face = flagged = 0
     phone_frames = phone_hits = 0
+    brightness = 0.0
     # indicator coverage: how often each behavioural signal fires
     fires = defaultdict(int)
     idx = 0
@@ -139,6 +140,9 @@ def analyse(path: Path, stride: int, phone_model=None):
             continue
         idx += 1
         sampled += 1
+        # Mean brightness is cheap here and it is the one number that settles
+        # arguments about lighting. Without it, "the room is dim" is an opinion.
+        brightness += float(frame.mean())
 
         # The phone is independent of the face, and it is the heaviest signal in
         # the score. Checked before the face work so a frame with no face still
@@ -184,6 +188,7 @@ def analyse(path: Path, stride: int, phone_model=None):
         "fps": fps, "frames": n, "w": w, "h": h, "duration": duration,
         "sampled": sampled, "with_face": with_face, "flagged": flagged,
         "phone_frames": phone_frames, "phone_hits": phone_hits,
+        "mean_brightness": round(brightness / sampled, 1) if sampled else 0.0,
         "fires": dict(fires),
     }
 
@@ -234,10 +239,10 @@ def main():
         scen, person, rep = m.group(1), int(m.group(2)), int(m.group(3))
         parsed.append((scen, person, rep, v))
 
-    print("=" * 96)
+    print("=" * 104)
     print(f"{'clip':16} {'res':>10} {'fps':>5} {'dur':>6} "
-          f"{'face%':>6} {'flagged%':>9}  indicators")
-    print("=" * 96)
+          f"{'face%':>6} {'flagged%':>9} {'bright':>7}  indicators")
+    print("=" * 104)
 
     for scen, person, rep, v in sorted(parsed):
         a = analyse(v, args.stride, phone_model)
@@ -249,7 +254,7 @@ def main():
         flagpct = 100 * a["flagged"] / a["with_face"] if a["with_face"] else 0
         fires = " ".join(f"{k}:{v_}" for k, v_ in sorted(a["fires"].items())) or "-"
         print(f"{v.name:16} {a['w']}x{a['h']:<6} {a['fps']:5.0f} {a['duration']:5.1f}s "
-              f"{facepct:5.1f}% {flagpct:8.1f}%  {fires}")
+              f"{facepct:5.1f}% {flagpct:8.1f}% {a['mean_brightness']:6.1f}  {fires}")
         rows.append((scen, person, rep, v, a))
 
     # ---- presence grid ---------------------------------------------------
@@ -257,9 +262,9 @@ def main():
     if args.people:
         people = [int(x) for x in args.people.split(",") if x.strip()]
     print()
-    print("=" * 96)
+    print("=" * 104)
     print("PRESENCE GRID   (rows = scenario, cols = person; value = repeats found)")
-    print("=" * 96)
+    print("=" * 104)
     header = "scenario  " + "".join(f"  p{p:<6}" for p in people)
     print(header)
     missing = []
@@ -274,9 +279,9 @@ def main():
 
     # ---- acceptance ------------------------------------------------------
     print()
-    print("=" * 96)
+    print("=" * 104)
     print("ACCEPTANCE CRITERIA")
-    print("=" * 96)
+    print("=" * 104)
     problems = []
 
     if bad_names:
@@ -315,6 +320,13 @@ def main():
                 weak_phone.append(f"{v.name} ({100*phonefrac:.0f}%)")
             elif scen in SAFE and phonefrac > MAX_SAFE_SUSPICIOUS:
                 spurious_phone.append(f"{v.name} ({100*phonefrac:.0f}%)")
+
+    per_clip = [
+        {"clip": v.name, "scenario": scen, "brightness": a["mean_brightness"],
+         "phone_pct": (round(100 * a["phone_hits"] / a["phone_frames"], 1)
+                       if a["phone_frames"] else None)}
+        for scen, person, rep, v, a in rows if a is not None
+    ]
 
     def verdict(ok, label, detail=""):
         print(f"  [{'PASS' if ok else 'FAIL'}] {label}")
@@ -357,10 +369,10 @@ def main():
 
     ok = not any([bad_names, missing, low_res, short, low_face])
     print()
-    print("=" * 96)
+    print("=" * 104)
     print("RESULT:", "PASS - the clips are ready to process" if ok
           else "FAIL - fix the items marked above, then re-run this check")
-    print("=" * 96)
+    print("=" * 104)
 
     # Report the verdict. A FAIL matters more than a PASS here: it means
     # someone has to re-record, and knowing that early is the whole point.
@@ -371,12 +383,37 @@ def main():
                       "low_resolution": low_res[:8], "too_short": short[:8],
                       "low_face_fraction": low_face[:8],
                       "noisy_safe_clips": noisy_safe[:8],
-                      "weak_cheating_clips": weak_cheat[:8]},
+                      "weak_cheating_clips": weak_cheat[:8],
+                      "weak_phone_clips": weak_phone[:8],
+                      "spurious_phone_clips": spurious_phone[:8]},
          "counts": {"bad_names": len(bad_names), "missing": len(missing),
                     "low_resolution": len(low_res), "too_short": len(short),
                     "low_face_fraction": len(low_face),
                     "noisy_safe_clips": len(noisy_safe),
-                    "weak_cheating_clips": len(weak_cheat)}},
+                    "weak_cheating_clips": len(weak_cheat),
+                    "weak_phone_clips": len(weak_phone),
+                    "spurious_phone_clips": len(spurious_phone)},
+         # Lighting and phone coverage, per clip.
+         #
+         # These are the two things that have been argued about without data:
+         # "the room is dim" and "the phone was visible". Both are measured here
+         # and sent, so the next such question is settled from the record rather
+         # than from inference. Brightness also gives a number to compare against
+         # footage shot elsewhere.
+         "lighting": {
+             "mean": round(sum(c["brightness"] for c in per_clip) / len(per_clip), 1)
+             if per_clip else None,
+             "min": min((c["brightness"] for c in per_clip), default=None),
+             "max": max((c["brightness"] for c in per_clip), default=None),
+             "scale": "0-255 mean of sampled frames",
+         },
+         "phone": {
+             "model_ran": phone_available,
+             "clips_with_any_phone": sum(1 for c in per_clip if c["phone_pct"]),
+             "per_clip_pct": {c["clip"]: c["phone_pct"] for c in per_clip
+                              if c["phone_pct"] is not None},
+         },
+         "per_clip": per_clip},
         enabled=not args.no_telemetry)
     return 0 if ok else 1
 
