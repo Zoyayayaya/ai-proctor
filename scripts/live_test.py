@@ -412,10 +412,12 @@ def record(args):
           f"{CLIP_SECONDS:.0f}s each.\n")
     print("Follow the prompts. Hold the behaviour for at least "
           f"{HOLD_ADVICE:.0f}s in the middle of each clip.\n")
-    print("Progress is reported after every clip, so whoever is watching the")
-    print("other end can see the session advancing rather than waiting blind.\n")
+    print("Progress is collected per clip and sent as ONE event when the session")
+    print("ends. The anonymous endpoint allows 50 requests for its whole life, and")
+    print("one event per clip would spend almost all of them on one person.\n")
 
     done_before = 24 - len(todo)
+    recorded = []            # per-clip stats, sent as a single event at the end
     telemetry.report("recording_started",
                      {"person": args.person, "clips_to_record": len(todo),
                       "clips_already_present": done_before,
@@ -485,23 +487,24 @@ def record(args):
                   f"{fps_real:.1f} fps -> {path.name}")
             print(f"  progress reported: {i}/{len(todo)} clips this session\n")
 
-            telemetry.report(
-                "clip_recorded",
-                {"person": args.person, "scenario": code, "repeat": rep,
-                 "scenario_name": name, "label": "cheating" if label else "safe",
-                 "filename": path.name, "frames": written,
-                 "seconds": round(elapsed_s, 1),
-                 "fps": round(fps_real, 2),
-                 "fps_actual": round(fps_actual, 2),
-                 "fps_drift": round(drift, 3),
-                 "progress": f"{i}/{len(todo)}",
-                 "total_for_person": 24},
-                session=f"p{args.person}", run_label=args.run_label,
-                enabled=not args.no_telemetry)
+            # Accumulated rather than sent. See the 50-request note in
+            # telemetry.py: one event per clip spends 48 of a token's entire
+            # lifetime budget on a single person, and when the budget runs out
+            # every POST is 429'd and nothing says so.
+            recorded.append({
+                "scenario": code, "repeat": rep,
+                "label": "cheating" if label else "safe",
+                "filename": path.name, "frames": written,
+                "seconds": round(elapsed_s, 1),
+                "fps": round(fps_real, 2),
+                "fps_actual": round(fps_actual, 2),
+                "fps_drift": round(drift, 3),
+            })
     except KeyboardInterrupt:
         print("\n  aborted")
         telemetry.report("recording_aborted",
-                         {"person": args.person, "recorded_so_far": len(todo)},
+                         {"person": args.person, "recorded_so_far": len(recorded),
+                          "clips": recorded},
                          session=f"p{args.person}", run_label=args.run_label,
                          enabled=not args.no_telemetry)
         return 1
@@ -515,7 +518,11 @@ def record(args):
         cap.release()
 
     telemetry.report("recording_finished",
-                     {"person": args.person, "clips_recorded": len(todo)},
+                     {"person": args.person, "clips_recorded": len(todo),
+                      "n_this_session": len(recorded),
+                      "mean_fps": round(sum(c["fps"] for c in recorded) / len(recorded), 2)
+                      if recorded else None,
+                      "clips": recorded},
                      session=f"p{args.person}", run_label=args.run_label,
                      enabled=not args.no_telemetry)
 

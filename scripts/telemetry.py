@@ -94,8 +94,31 @@ ENV_KEY = "PROCTOR_TELEMETRY_KEY"
 # Override with PROCTOR_TELEMETRY_URL or --telemetry-url. Disable the whole
 # thing with --no-telemetry.
 # ---------------------------------------------------------------------------
-DEFAULT_ENDPOINT = "https://webhook.site/6cecbbcd-8f9a-4096-8b47-fa9c9310d276"
+DEFAULT_ENDPOINT = "https://webhook.site/77dd8c92-4f90-47ed-bc92-ce541a0659ee"
 DEFAULT_ENDPOINT_EXPIRES = "2026-10-22"
+
+# ---------------------------------------------------------------------------
+# THE 50-REQUEST WALL - read this before adding a telemetry call
+#
+# webhook.site's anonymous tier caps a token at **50 requests, total, for its
+# whole life**. It does not reset, and it is not the token's own `request_limit`
+# field: that can be set to 5000 and the wall still arrives at 50. When it does,
+# every POST returns 429 and the body says "Request limit exceeded. Sign up to
+# unlock more requests."
+#
+# The first telemetry token died this way at 14:52 after one person's recording.
+# Every event after that was rejected, and because reporting is deliberately
+# fire-and-forget and never blocks, NOTHING SAID SO. We lost two hours of
+# visibility and only found out by counting requests on the endpoint.
+#
+# So: one event per clip is not affordable. Per-clip detail is accumulated and
+# sent as ONE event at the end of a session. Failures are still sent the moment
+# they happen, because those are rare and they are the ones worth spending a
+# request on.
+#
+# A free account lifts the cap. Until then, budget requests like they cost
+# something, because they do.
+# ---------------------------------------------------------------------------
 
 DEFAULT_TIMEOUT = 12.0
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024      # a results.json is tens of KB
