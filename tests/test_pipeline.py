@@ -886,6 +886,83 @@ def test_beep_falls_back_when_the_speaker_is_refused(monkeypatch):
     live_test.beep("start")                  # must not raise
 
 
+# --------------------------------------------------------------------------
+# check_clips: the phone, which the checker never used to test
+# --------------------------------------------------------------------------
+def _fake_yolo(cls, conf, n=1):
+    """A model that returns n boxes of one class at one confidence."""
+    class _Box:
+        def __init__(self):
+            self.cls = [cls]
+            self.conf = [conf]
+
+    class _Res:
+        def __init__(self):
+            self.boxes = [_Box() for _ in range(n)]
+
+    class _Model:
+        def __call__(self, frame, **kw):
+            return [_Res()]
+
+    return _Model()
+
+
+def test_phone_visible_uses_the_evaluations_own_thresholds():
+    """
+    The checker must ask the same question the evaluation asks, or it verifies
+    something the evaluation does not do. Class id and confidence come from
+    rule_score, which is the single source of truth for both.
+    """
+    import rule_score as rs
+
+    import check_clips
+
+    assert check_clips.phone_visible(
+        _fake_yolo(rs.PHONE_CLASS_ID, rs.PHONE_CONF + 0.5), None) is True
+    assert check_clips.phone_visible(
+        _fake_yolo(rs.PHONE_CLASS_ID, rs.PHONE_CONF - 0.05), None) is False
+    assert check_clips.phone_visible(
+        _fake_yolo(rs.PHONE_CLASS_ID + 1, 0.99), None) is False   # another class
+    assert check_clips.phone_visible(_fake_yolo(rs.PHONE_CLASS_ID, 0.9, n=0), None) is False
+
+
+def test_phone_visible_never_raises_and_handles_no_model():
+    """A missing or broken detector must not take the check down."""
+    import check_clips
+
+    class _Broken:
+        def __call__(self, frame, **kw):
+            raise RuntimeError("model exploded")
+
+    assert check_clips.phone_visible(None, None) is False
+    assert check_clips.phone_visible(_Broken(), None) is False
+
+
+def test_check_clips_counts_phone_frames_only_when_a_model_is_present(tmp_path):
+    """
+    The counter must stay at zero without a model, or a machine with no YOLO
+    reports 0% phone coverage and looks like a failed S7 take.
+    """
+    import cv2
+    import numpy as np
+
+    import check_clips
+
+    p = tmp_path / "S7_p1_r1.mp4"
+    vw = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (1280, 720))
+    for _ in range(20):
+        vw.write(np.zeros((720, 1280, 3), np.uint8))
+    vw.release()
+
+    without = check_clips.analyse(p, stride=5, phone_model=None)
+    assert without["phone_frames"] == 0 and without["phone_hits"] == 0
+
+    with_model = check_clips.analyse(
+        p, stride=5, phone_model=_fake_yolo(check_clips.rs.PHONE_CLASS_ID, 0.9))
+    assert with_model["phone_frames"] > 0          # counted
+    assert with_model["phone_hits"] == with_model["phone_frames"]   # all hits
+
+
 def test_comms_reports_unreadable_messages_instead_of_dropping_them(monkeypatch, capsys):
     """
     A message we cannot decrypt must be reported, not skipped.

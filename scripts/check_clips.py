@@ -54,8 +54,62 @@ MIN_FACE_FRACTION = 0.80          # sampled frames that must contain a face
 MIN_CHEAT_SUSPICIOUS = 0.50       # cheating clips: frames with >=1 indicator
 MAX_SAFE_SUSPICIOUS = 0.20        # safe clips: frames with >=1 indicator
 
+# ---------------------------------------------------------------------------
+# The phone
+#
+# phone_detected is the heaviest signal in the score (+40, and binary), and the
+# one S7 exists to exercise. This checker did not run it: it verified face,
+# framing, naming and three of the five indicators, so a clip whose phone never
+# fired could still pass. That is exactly what happened to S7 on the first pass -
+# it was caught, but as "weak cheating", which points at the wrong cause.
+#
+# YOLO is the most expensive stage by a distance, so it can be sampled more
+# sparsely than the face work. 1 means every sampled frame, which is the default
+# because a 12-second clip only yields ~36 sampled frames at the default stride -
+# sampling those again would leave too few looks at the phone to mean anything.
+# Raise it only if the check is too slow on a given machine, and accept that a
+# phone appearing briefly in a safe clip could then slip past.
+#
+# NOTE the counter is `sampled`, not `idx`: `idx` is incremented again after the
+# stride `continue`, so it runs 1, 6, 11, 16... at stride 5 and never lands on a
+# multiple of 10. Using it here silently checked nothing at all.
+# ---------------------------------------------------------------------------
+PHONE_EVERY = 1
+PHONE_IMGSZ = 640                 # matches the offline extraction default
+MIN_PHONE_FRAMES = 0.30           # S7: the phone must be seen in >=30% of samples
 
-def analyse(path: Path, stride: int):
+
+def load_phone_model():
+    """
+    YOLO, or None.
+
+    Worth having, not worth failing over: a machine without the detect extra
+    should still get every other check rather than nothing at all.
+    """
+    try:
+        from ultralytics import YOLO
+        return YOLO("yolov5s.pt")
+    except Exception as e:  # noqa: BLE001
+        print(f"  note: phone detection unavailable ({type(e).__name__}) - "
+              f"S7 will not be verified\n")
+        return None
+
+
+def phone_visible(model, frame) -> bool:
+    """Same class id and same threshold as the evaluation, so this measures it."""
+    if model is None:
+        return False
+    try:
+        res = model(frame, imgsz=PHONE_IMGSZ, verbose=False)[0]
+        for b in res.boxes:
+            if int(b.cls[0]) == rs.PHONE_CLASS_ID and float(b.conf[0]) > rs.PHONE_CONF:
+                return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def analyse(path: Path, stride: int, phone_model=None):
     import cv2
     import mediapipe as mp
 
@@ -72,7 +126,8 @@ def analyse(path: Path, stride: int):
         min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
     sampled = with_face = flagged = 0
-    # indicator coverage: how often each of the four behavioural signals fires
+    phone_frames = phone_hits = 0
+    # indicator coverage: how often each behavioural signal fires
     fires = defaultdict(int)
     idx = 0
     while True:
@@ -84,6 +139,16 @@ def analyse(path: Path, stride: int):
             continue
         idx += 1
         sampled += 1
+
+        # The phone is independent of the face, and it is the heaviest signal in
+        # the score. Checked before the face work so a frame with no face still
+        # gets its phone looked at - S8 leaves frame, and a phone there matters.
+        if phone_model is not None and sampled % PHONE_EVERY == 0:
+            phone_frames += 1
+            if phone_visible(phone_model, frame):
+                phone_hits += 1
+                fires["phone_detected"] += 1
+
         fh, fw, _ = frame.shape
         res = fm.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         if not res.multi_face_landmarks:
@@ -118,6 +183,7 @@ def analyse(path: Path, stride: int):
     return {
         "fps": fps, "frames": n, "w": w, "h": h, "duration": duration,
         "sampled": sampled, "with_face": with_face, "flagged": flagged,
+        "phone_frames": phone_frames, "phone_hits": phone_hits,
         "fires": dict(fires),
     }
 
@@ -154,6 +220,9 @@ def main():
                                enabled=not args.no_telemetry)
         return 1
 
+    phone_model = load_phone_model()
+    phone_available = phone_model is not None
+
     print(f"checking {len(vids)} clips in {clips_dir}  (stride={args.stride})\n")
 
     parsed, bad_names, rows = [], [], []
@@ -171,7 +240,7 @@ def main():
     print("=" * 96)
 
     for scen, person, rep, v in sorted(parsed):
-        a = analyse(v, args.stride)
+        a = analyse(v, args.stride, phone_model)
         if a is None:
             print(f"{v.name:16} UNREADABLE")
             rows.append((scen, person, rep, v, None))
@@ -219,6 +288,7 @@ def main():
 
     low_face, low_res, short = [], [], []
     weak_cheat, noisy_safe = [], []
+    weak_phone, spurious_phone = [], []
     for scen, person, rep, v, a in rows:
         if a is None:
             problems.append(f"{v.name} could not be read")
@@ -236,6 +306,15 @@ def main():
         elif scen not in SAFE and scen not in EXPECTED_HARD:
             if flagfrac < MIN_CHEAT_SUSPICIOUS:
                 weak_cheat.append(f"{v.name} ({100*flagfrac:.0f}%)")
+
+        # The phone, kept separate because the cause is different from a posing
+        # problem: the phone is either visible to the camera or it is not.
+        if a["phone_frames"]:
+            phonefrac = a["phone_hits"] / a["phone_frames"]
+            if scen == "S7" and phonefrac < MIN_PHONE_FRAMES:
+                weak_phone.append(f"{v.name} ({100*phonefrac:.0f}%)")
+            elif scen in SAFE and phonefrac > MAX_SAFE_SUSPICIOUS:
+                spurious_phone.append(f"{v.name} ({100*phonefrac:.0f}%)")
 
     def verdict(ok, label, detail=""):
         print(f"  [{'PASS' if ok else 'FAIL'}] {label}")
@@ -255,6 +334,21 @@ def main():
     verdict(not weak_cheat,
             f"cheating clips flagged in >= {MIN_CHEAT_SUSPICIOUS*100:.0f}% of frames "
             f"(S6 excluded - expected hard)", "; ".join(weak_cheat[:5]))
+
+    # Only meaningful when YOLO loaded. Said plainly rather than silently skipped.
+    if phone_available:
+        verdict(not weak_phone,
+                f"S7: phone visible in >= {MIN_PHONE_FRAMES*100:.0f}% of sampled frames",
+                "; ".join(weak_phone[:4]))
+        verdict(not spurious_phone,
+                "safe clips: no phone detected", "; ".join(spurious_phone[:4]))
+        if weak_phone:
+            print("         If the phone was clearly held in frame and this still")
+            print("         failed, that is a finding about the detector, not a bad")
+            print("         take. Report it - do not re-record to make it pass.")
+    else:
+        print("  [SKIP] phone detection - ultralytics is not installed here, so S7")
+        print("         was NOT verified. Install with: uv sync --extra detect")
 
     print()
     print("  NOTE on S6 (look down at notes): the feature set has no head-pitch")
