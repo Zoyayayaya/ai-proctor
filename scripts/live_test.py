@@ -282,6 +282,30 @@ def live_test(args):
 
 
 # --------------------------------------------------------------------------
+def measure_fps(cap, seconds: float = 1.0) -> float:
+    """
+    How fast is this camera actually delivering frames?
+
+    The writer's fps sets the file's duration (frames / fps), and both
+    check_clips.py and extract_features.py read that timeline back out of the
+    file. A webcam asked for 15 fps may deliver 1, so the rate has to be measured
+    rather than assumed.
+
+    Reads and discards frames for a moment, which doubles as camera warm-up.
+    Never returns less than 1.0: a stalled camera must not yield a zero-fps
+    writer or a division by zero downstream.
+    """
+    t0 = time.time()
+    n = 0
+    while time.time() - t0 < seconds:
+        ok, _ = cap.read()
+        if not ok:
+            break
+        n += 1
+    dt = time.time() - t0
+    return max(1.0, n / dt) if dt > 0 else 1.0
+
+
 def record(args):
     import cv2
     cap = open_camera(CAM_INDEX, WIDTH, HEIGHT, 15.0)
@@ -330,7 +354,19 @@ def record(args):
                 time.sleep(1)
             print(" RECORDING")
 
-            vw, _codec = open_writer(path, 15.0, (WIDTH, HEIGHT))
+            # ------------------------------------------------------------------
+            # The writer's fps decides the file's DURATION: duration = frames/fps.
+            # Both check_clips.py and extract_features.py read that timeline back
+            # out of the file, and extract_features uses it for the `duration`
+            # feature - how long a suspicious state held.
+            #
+            # A webcam asked for 15 fps may deliver 1. Writing 12 frames at a
+            # declared 15 fps turns a 12-second clip into a 0.8-second one: it
+            # fails the >=10s check and the duration feature tops out at 0.8s
+            # instead of 12s. Measure the real rate and write at that.
+            # ------------------------------------------------------------------
+            fps_real = measure_fps(cap)
+            vw, _codec = open_writer(path, fps_real, (WIDTH, HEIGHT))
             if vw is None:
                 print(f"  !! could not open a writer for {path}")
                 return 1
@@ -344,7 +380,19 @@ def record(args):
                 written += 1
             vw.release()
             elapsed_s = time.time() - t0
-            print(f"  done - {written} frames, {elapsed_s:.1f}s -> {path.name}")
+
+            # If the rate moved after the probe, the file's timeline is wrong and
+            # the clip should not be trusted. Say so rather than let it through.
+            fps_actual = written / elapsed_s if elapsed_s else 0.0
+            drift = abs(fps_actual - fps_real) / fps_real if fps_real else 0.0
+            if drift > 0.20:
+                print(f"  !! camera rate moved during the clip: probed "
+                      f"{fps_real:.1f} fps, achieved {fps_actual:.1f} fps.")
+                print(f"     The clip's timeline is off by {drift*100:.0f}% - "
+                      f"re-record {path.name}.")
+
+            print(f"  done - {written} frames, {elapsed_s:.1f}s, "
+                  f"{fps_real:.1f} fps -> {path.name}")
             print(f"  progress reported: {i}/{len(todo)} clips this session\n")
 
             telemetry.report(
@@ -353,6 +401,9 @@ def record(args):
                  "scenario_name": name, "label": "cheating" if label else "safe",
                  "filename": path.name, "frames": written,
                  "seconds": round(elapsed_s, 1),
+                 "fps": round(fps_real, 2),
+                 "fps_actual": round(fps_actual, 2),
+                 "fps_drift": round(drift, 3),
                  "progress": f"{i}/{len(todo)}",
                  "total_for_person": 24},
                 session=f"p{args.person}", run_label=args.run_label,

@@ -759,6 +759,77 @@ def test_the_real_key_never_appears_in_a_tracked_file():
         f"It belongs in .env only - remove it and rewrite the commit.")
 
 
+# --------------------------------------------------------------------------
+# recording: the writer's fps decides the file's duration
+# --------------------------------------------------------------------------
+def test_measure_fps_reads_the_real_rate_not_the_requested_one():
+    """
+    A webcam asked for 15 fps may deliver 1.
+
+    The writer's fps sets the file's duration (frames / fps), and both
+    check_clips.py and extract_features.py read that timeline back out. Assuming
+    15 turns a 12-second clip into a 0.8-second one, which fails the duration
+    check and corrupts the `duration` feature in the score.
+    """
+    import time
+
+    import live_test
+
+    class SlowCap:
+        """Delivers roughly 2 frames per second."""
+
+        def read(self):
+            time.sleep(0.5)
+            return True, None
+
+    assert 1.5 < live_test.measure_fps(SlowCap(), seconds=1.1) < 2.5
+
+
+def test_measure_fps_never_returns_zero():
+    """A stalled camera must not yield a zero-fps writer or a divide by zero."""
+    import live_test
+
+    class DeadCap:
+        def read(self):
+            return False, None
+
+    assert live_test.measure_fps(DeadCap(), seconds=0.1) >= 1.0
+
+
+def test_writer_fps_decides_the_file_duration(tmp_path):
+    """
+    The exact arithmetic that made every field clip fail.
+
+    12 frames written at a declared 15 fps is a 0.8-second file no matter how
+    many wall-clock seconds it took to capture them. The same 12 frames written
+    at the rate they were actually captured is a 12-second file.
+    """
+    import cv2
+    import numpy as np
+
+    import check_clips
+
+    def write(name, fps):
+        p = tmp_path / name
+        vw = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*"mp4v"), fps, (1280, 720))
+        for _ in range(12):
+            vw.write(np.zeros((720, 1280, 3), np.uint8))
+        vw.release()
+        cap = cv2.VideoCapture(str(p))
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        f = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        cap.release()
+        return n, f
+
+    n, fps_declared = write("as_shipped.mp4", 15.0)     # what the bug produced
+    assert n == 12
+    assert (n / fps_declared) < check_clips.MIN_DURATION_S
+
+    n2, fps_true = write("as_fixed.mp4", 1.0)           # the rate really achieved
+    assert n2 == 12
+    assert (n2 / fps_true) >= check_clips.MIN_DURATION_S
+
+
 def test_comms_reports_unreadable_messages_instead_of_dropping_them(monkeypatch, capsys):
     """
     A message we cannot decrypt must be reported, not skipped.
