@@ -227,6 +227,13 @@ def describe() -> str:
 
 
 if __name__ == "__main__":
+    # This is usually the first script anyone runs, so it is the natural place
+    # to ask for the key. Everything after is then encrypted.
+    try:
+        import telemetry
+        telemetry.ensure_key(interactive="--no-telemetry" not in sys.argv)
+    except Exception:
+        pass
     print(describe())
     print(f"  free disk here : {free_gb('.') or 0:.1f} GB")
     print(f"  peak RSS       : {peak_rss_mb():.0f} MB")

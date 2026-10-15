@@ -233,12 +233,21 @@ the files still get written locally and sent by hand.
 uv run python scripts/eval.py --telemetry-setup
 ```
 
-It asks for the URL, writes `.env`, and prints where. Nothing else is requested.
-
-Or set it by hand for the session:
+**You do not have to run this deliberately.** The first script you run that can
+send anything — `sysutil.py` during setup, or any report the agent makes — asks
+for the key once, writes `.env`, and everything after it is encrypted. This
+command just does it explicitly if you would rather get it out of the way.
 
 ```powershell
-$env:PROCTOR_TELEMETRY_URL = "https://your-endpoint"
+uv run python scripts/eval.py --telemetry-setup
+```
+
+It asks for the key, writes `.env`, and prints where. Nothing else is requested.
+
+To set it by hand instead:
+
+```powershell
+Set-Content -Path .env -Value "PROCTOR_TELEMETRY_KEY=<the key you were given>"
 ```
 
 Check what would be sent, transmitting nothing:

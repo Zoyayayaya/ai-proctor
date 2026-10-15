@@ -104,11 +104,13 @@ def main() -> int:
         print("  telemetry disabled; nothing sent")
         return 0
 
-    key = telemetry.resolve_key()
+    # Ask for the key the first time anything is sent, so nothing travels in
+    # the clear just because eval.py has not run yet.
+    key = telemetry.ensure_key(interactive=not args.no_telemetry)
     if not key:
-        print("  WARNING: no key found, so this update travels UNENCRYPTED.")
-        print("           Put PROCTOR_TELEMETRY_KEY in .env at the repo root,")
-        print("           or export it. Checked .env and the environment.")
+        print("  WARNING: no key set, so this update travels UNENCRYPTED.")
+        print("           Re-run without --no-telemetry to be prompted, or put")
+        print("           PROCTOR_TELEMETRY_KEY in .env at the repo root.")
 
     r = telemetry.report(event, detail, run_label=args.run_label,
                          enabled=not args.no_telemetry)

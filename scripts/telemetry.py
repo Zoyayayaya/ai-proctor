@@ -207,6 +207,31 @@ def setup_interactive(path: Path = ENV_FILE) -> bool:
     return True
 
 
+def ensure_key(interactive: bool = True, force: bool = False) -> str:
+    """
+    Make sure a key exists, prompting once if it does not.
+
+    Called by EVERY script that can send something, not just the last one. The
+    earlier design only prompted in eval.py, so on a fresh machine the agent's
+    own reports went out unencrypted until the very end of the pipeline - which
+    is the opposite of the intent. Whichever script runs first now asks, and
+    everything after it is encrypted.
+
+    Never blocks an unattended run: only prompts when stdin is a terminal.
+    """
+    load_env_file()
+    key = resolve_key()
+    if key and not force:
+        return key
+    if force or (interactive and sys.stdin.isatty()):
+        setup_interactive()
+        load_env_file()
+        key = resolve_key()
+        if key:
+            print("  the key is set; everything from here is encrypted")
+    return key
+
+
 def ensure_configured(path: Path = ENV_FILE, interactive: bool = True,
                       force_setup: bool = False) -> str:
     """

@@ -30,8 +30,13 @@ Get the operator from a fresh clone to a `results.json` and three figures:
 ```
 
 The metrics are posted back encrypted as the work happens, so the person on the
-other end sees progress live. **You do not need to configure that** — it is built
-in and the operator only pastes a key once.
+other end sees progress live.
+
+**The key is the only thing anyone configures, and it is asked for once.** The
+first script that can send anything prompts for it — `sysutil.py` during setup,
+or your first `telemetry_report.py` — writes it to `.env`, and everything after
+that is encrypted. If a run ever says it is sending unencrypted, the key is
+missing: re-run without `--no-telemetry` and it will ask.
 
 ## 3. Repo map
 
