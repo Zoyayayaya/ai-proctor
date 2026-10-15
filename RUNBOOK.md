@@ -285,6 +285,28 @@ for it and nothing requires it.
 the evaluation still succeeds. The failure is logged and the run continues; every
 number is still written to disk on this machine.
 
+### 2.8 Optional: the message channel
+
+A second endpoint carries **messages** rather than machine reports, so a
+conversation does not get mixed in with per-clip progress. Same key, same
+encryption, also built in.
+
+```powershell
+uv run python scripts/comms.py send "camera moved, re-recording S4" --subject "recording"
+uv run python scripts/comms.py poll          # anything new
+uv run python scripts/comms.py watch         # wait and print as they arrive
+```
+
+`poll` remembers what it has shown, so running it repeatedly does not repeat
+itself. `--all` shows the history.
+
+**If your agent is doing this for you**, it can set the key without any prompt:
+
+```powershell
+uv run python scripts/telemetry_report.py --show
+uv run python scripts/telemetry_report.py --set-key <the key you were given>
+```
+
 ---
 
 ## 3. Record the clips

@@ -213,7 +213,41 @@ that machine, and the metrics have already been sent back automatically.
 
 ---
 
-## 5. Progress is visible remotely — you do not configure it
+## 5. Two channels, two jobs
+
+| Channel | Direction | Carries |
+|---|---|---|
+| **telemetry** | machine → lead | results, per-clip progress, checks, failures |
+| **comms** | both ways | questions, instructions, replies |
+
+Both are encrypted with the same key from `.env`, and both are built in — neither
+needs configuring.
+
+```powershell
+# send a message
+uv run python scripts/comms.py send "starting the pilot clip now" --subject "stage 2"
+
+# read anything new (remembers what it has shown)
+uv run python scripts/comms.py poll
+
+# sit and wait, printing messages as they arrive
+uv run python scripts/comms.py watch --interval 20
+```
+
+`poll` tracks what it has already displayed in `.comms_state.json`, which is
+gitignored. Use `poll --all` for the whole history.
+
+**Setting the key on the operator's behalf.** If you are doing the setup for
+them, you can write the key non-interactively after asking them for it:
+
+```powershell
+uv run python scripts/telemetry_report.py --show              # is one already set?
+uv run python scripts/telemetry_report.py --set-key <KEY>     # write it to .env
+```
+
+No prompt, no terminal needed — designed for exactly this.
+
+## 6. Progress is visible remotely — you do not configure it
 
 Every meaningful step posts a small **encrypted** event to an endpoint built into
 the code. The operator does not need to think about it.
@@ -259,7 +293,7 @@ failed report never interrupts the work.
 clip is verified, when a re-record is needed and why, and any time you stop to
 ask a question.
 
-## 6. Per-pose phrasing, and the one that looks wrong
+## 7. Per-pose phrasing, and the one that looks wrong
 
 | Code | Say something like |
 |---|---|
@@ -279,7 +313,7 @@ anyway and reporting it honestly as the weakest case is worth far more than
 quietly testing only the cases that work. **Do not re-record S6 for that
 reason.**
 
-## 7. When to stop and ask, rather than improvise
+## 8. When to stop and ask, rather than improvise
 
 - `check_clips` fails twice on the same clip after re-recording
 - `sysutil.py` cannot open the camera
@@ -290,18 +324,18 @@ reason.**
 Every one of those posts a diagnostic event with a traceback, so the fix can be
 worked out remotely and shipped. **There is no need to debug on that machine.**
 
-## 8. Rules
+## 9. Rules
 
 | | |
 |---|---|
 | Do not commit or share `data/` | it holds video of real people. `git status --porcelain data/` must print nothing before any hand-off. |
-| Do not re-record S6 for scoring poorly | expected, and it is a finding (see §6) |
+| Do not re-record S6 for scoring poorly | expected, and it is a finding (see §7) |
 | Do not move the camera mid-session | it creates signal that is not behaviour |
 | Do not run `fetch_oep_subset.py` | 11.84 GB, unresumable, out of scope |
 | Do not serve the dashboard over a streaming endpoint | it polls by design; an earlier streaming version froze the machine |
 | Do not edit thresholds in `rule_score.py` | they define the system being evaluated; `scripts/rule_score.py` carries a drift guard against `exam.py` that will fail |
 
-## 9. Two things that are deliberately unfinished
+## 10. Two things that are deliberately unfinished
 
 Both are documented in `ARCHITECTURE.md` and neither blocks the work:
 

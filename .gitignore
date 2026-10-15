@@ -19,6 +19,9 @@ data/clips/
 data/oep/
 data/media/
 
+# comms polling state - local bookkeeping, never shared
+.comms_state.json
+
 # belt and braces: ignore any recorded media anywhere in the tree, so a clip
 # saved to the wrong path still cannot be committed
 *.mp4

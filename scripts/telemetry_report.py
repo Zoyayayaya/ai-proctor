@@ -70,7 +70,8 @@ def parse_detail(pairs) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("event", help=f"one of {', '.join(CONVENTIONAL)}, or any name")
+    ap.add_argument("event", nargs="?", default="",
+                    help=f"one of {', '.join(CONVENTIONAL)}, or any name")
     ap.add_argument("message", nargs="?", default="",
                     help="a short human-readable description")
     ap.add_argument("--stage", default="", help="install | pilot | recording | "
@@ -82,7 +83,38 @@ def main() -> int:
                     help="extra key=value, repeatable")
     ap.add_argument("--run-label", default="")
     ap.add_argument("--no-telemetry", action="store_true")
+    ap.add_argument("--set-key", default="", metavar="KEY",
+                    help="write the key to .env and exit. For an agent setting it "
+                         "on the operator's behalf, after asking them for it")
+    ap.add_argument("--show", action="store_true",
+                    help="show whether a key is set, and where it came from")
     args = ap.parse_args()
+
+    # --- key management, for an agent working on the operator's behalf -------
+    if args.show:
+        import os
+        from pathlib import Path as _P
+        telemetry.load_env_file()
+        k = telemetry.resolve_key()
+        envfile = _P(__file__).resolve().parent.parent / ".env"
+        print(f"  key set        : {'yes' if k else 'NO'}")
+        if k:
+            print(f"  length         : {len(k)} characters")
+        print(f"  .env           : {envfile}"
+              f"  ({'exists' if envfile.exists() else 'missing'})")
+        print(f"  env var        : "
+              f"{'set' if os.environ.get(telemetry.ENV_KEY) else 'not set'}")
+        return 0
+
+    if args.set_key:
+        envfile = telemetry.write_env_file("", args.set_key)
+        print(f"  key written to {envfile}")
+        print("  .env is gitignored, so it will not be pushed.")
+        print("  Every report from here is encrypted with it.")
+        return 0
+
+    if not args.event:
+        ap.error("give an event name, or use --set-key / --show")
 
     detail = parse_detail(args.detail)
     if args.message:
