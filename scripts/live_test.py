@@ -187,6 +187,16 @@ def live_test(args):
     if cap is None:
         camera_failed("live_test", CAM_INDEX)
         return 1
+    # Measure the camera ON ITS OWN before detection starts.
+    #
+    # This loop runs full detection on every frame. On a CPU-only machine that
+    # detection is the bottleneck, not the camera - so the combined rate cannot
+    # say whether a low number is the camera's fault or ours. The recorder does
+    # no detection at all, so its rate is the one that decides whether clips come
+    # out right. Report both and warn on the raw one.
+    raw_fps = measure_fps(cap, seconds=2.0)
+    print(f"  camera on its own      : {raw_fps:.1f} fps (no detection)")
+
     fm, hd, ps, yolo = build_detectors()
     hist, scores, indicators = [], [], defaultdict(int)
     frames = faces = 0
@@ -257,7 +267,9 @@ def live_test(args):
         print("  no frames captured - the camera opened but produced nothing")
         return 1
     fps_seen = frames / max(args.seconds, 1e-6)
-    print(f"  frames captured        : {frames}  ({fps_seen:.1f} fps)")
+    print(f"  camera on its own      : {raw_fps:.1f} fps   <- what recording uses")
+    print(f"  with detection running : {fps_seen:.1f} fps   <- the whole pipeline")
+    print(f"  frames captured        : {frames}")
     print(f"  face detected          : {faces} ({100*faces/frames:.0f}%)")
     if scores:
         print(f"  raw score  mean / max  : {np.mean(scores):.1f} / {max(scores)}")
@@ -266,16 +278,24 @@ def live_test(args):
     print("  indicator fire counts  : " +
           (", ".join(f"{k}={v}" for k, v in sorted(indicators.items())) or "none fired"))
     print()
-    # The rate matters twice over: it sets the file's duration when recording
-    # (frames / fps), and extract_features reads that timeline back for the
-    # `duration` feature. A camera quietly running at 1 fps corrupts both, and
-    # nothing downstream can tell. Say it here, before anything is recorded.
-    if fps_seen < 5:
-        print(f"  WARNING: the camera is delivering {fps_seen:.1f} frames per second.")
+    # Warn on the CAMERA's rate, not the combined one.
+    #
+    # The recorder does no detection at all - it captures and writes. Detection
+    # happens later, offline, in extract_features.py. So a low combined number
+    # here is usually this machine's CPU, not the camera, and it does not predict
+    # what the clips will look like. Only raw_fps does.
+    if raw_fps < 5:
+        print(f"  WARNING: the camera on its own is delivering {raw_fps:.1f} frames per second.")
         print("  A webcam normally manages 15 to 30. This is almost always low light -")
         print("  cameras lengthen their exposure in the dark and the rate collapses.")
         print("  Add a lamp in front of you, or move somewhere brighter, and run this")
         print("  again. Do NOT start recording until this number is well above 1.")
+        print()
+    elif fps_seen < 5:
+        print(f"  NOTE: the camera is fine at {raw_fps:.1f} fps. The {fps_seen:.1f} fps above")
+        print("  is this machine's CPU running detection, not the camera - the slow")
+        print("  pipeline here does NOT slow the recordings down. Recording captures")
+        print("  and writes only; detection runs later, offline.")
         print()
     if faces / frames < 0.5:
         print("  WARNING: a face was found in under half the frames.")
