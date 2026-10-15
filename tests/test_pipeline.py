@@ -617,3 +617,76 @@ def test_telemetry_never_raises_on_a_dead_endpoint():
                        timeout=2.0, quiet=True)
     assert r["sent"] is False
     assert r["status"] is None
+
+
+# --------------------------------------------------------------------------
+# endpoint keepalive (scripts/keepalive.py)
+# --------------------------------------------------------------------------
+def test_keepalive_reads_the_uuid_out_of_the_url():
+    import keepalive
+    assert keepalive.token_id("https://webhook.site/abc-123") == "abc-123"
+    assert keepalive.token_id("https://webhook.site/abc-123/") == "abc-123"
+
+
+def test_keepalive_days_left_is_timezone_correct():
+    """
+    expires_at comes back from the API in UTC. Comparing it against a naive
+    local datetime is out by the UTC offset - 5.5 hours here, which is enough to
+    read a 7-day token as 6.77 days.
+
+    This test exists because that mistake was made, and it looked like "the
+    refresh did not work" rather than "the comparison is wrong", which sent the
+    investigation in the wrong direction for a while.
+    """
+    from datetime import datetime, timedelta, timezone
+    import keepalive
+
+    assert 6.99 < keepalive.days_left(
+        datetime.now(timezone.utc) + timedelta(days=7)) < 7.01
+    assert 0.99 < keepalive.days_left(
+        datetime.now(timezone.utc) + timedelta(days=1)) < 1.01
+    assert keepalive.days_left(None) is None
+
+
+def test_keepalive_write_constant_rewrites_exactly_one_line(tmp_path):
+    import keepalive
+
+    f = tmp_path / "mod.py"
+    f.write_text(
+        "# COMMS_EXPIRES is mentioned in this comment and must survive\n"
+        'COMMS_EXPIRES = "2026-01-01"\n'
+        'OTHER_EXPIRES = "2026-01-01"\n'
+        "x = 1\n", encoding="utf-8")
+
+    assert keepalive.write_constant(f, "COMMS_EXPIRES", "2026-10-22") is True
+    text = f.read_text(encoding="utf-8")
+    assert 'COMMS_EXPIRES = "2026-10-22"' in text
+    assert "# COMMS_EXPIRES is mentioned in this comment" in text   # comment kept
+    assert 'OTHER_EXPIRES = "2026-01-01"' in text                   # neighbour kept
+    assert "x = 1" in text                                          # rest kept
+
+
+def test_keepalive_write_constant_is_idempotent_and_safe(tmp_path):
+    import keepalive
+
+    f = tmp_path / "mod.py"
+    f.write_text('A = "2026-10-22"\n', encoding="utf-8")
+    assert keepalive.write_constant(f, "A", "2026-10-22") is False  # already right
+    assert keepalive.write_constant(f, "NOT_THERE", "x") is False   # absent constant
+    assert keepalive.write_constant(tmp_path / "gone.py", "A", "x") is False
+
+
+def test_endpoint_expiry_constants_are_valid_dates():
+    """
+    The keepalive rewrites these strings. If it ever writes something malformed,
+    telemetry's expiry warning silently stops working (it swallows exceptions),
+    so the shape is pinned here instead.
+    """
+    from datetime import date
+    import comms
+    import telemetry
+
+    for s in (telemetry.DEFAULT_ENDPOINT_EXPIRES, comms.COMMS_EXPIRES):
+        y, m, d = (int(x) for x in s.split("-"))
+        date(y, m, d)                      # raises if malformed
+        assert len(s) == 10 and s[4] == "-" and s[7] == "-"

@@ -247,6 +247,19 @@ uv run python scripts/telemetry_report.py --set-key <KEY>     # write it to .env
 
 No prompt, no terminal needed — designed for exactly this.
 
+**Both endpoints expire 7 days after their last refresh**, and the limit cannot
+be extended — but it *can* be reset, keeping the same address. Refresh before a
+recording session and after any long gap:
+
+```powershell
+uv run python scripts/keepalive.py            # refresh both
+uv run python scripts/keepalive.py --check    # report only, change nothing
+```
+
+It also raises the request ceiling (a two-person run sends ~130; the default is
+200). If `--check` reports an endpoint dead, it expired unnoticed — the address
+is baked into `telemetry.py` and `comms.py` and has to be replaced there.
+
 ## 6. Progress is visible remotely — you do not configure it
 
 Every meaningful step posts a small **encrypted** event to an endpoint built into

@@ -95,7 +95,7 @@ ENV_KEY = "PROCTOR_TELEMETRY_KEY"
 # thing with --no-telemetry.
 # ---------------------------------------------------------------------------
 DEFAULT_ENDPOINT = "https://webhook.site/6cecbbcd-8f9a-4096-8b47-fa9c9310d276"
-DEFAULT_ENDPOINT_EXPIRES = "2026-10-21"
+DEFAULT_ENDPOINT_EXPIRES = "2026-10-22"
 
 DEFAULT_TIMEOUT = 12.0
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024      # a results.json is tens of KB

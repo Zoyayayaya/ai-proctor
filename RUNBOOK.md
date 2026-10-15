@@ -307,6 +307,31 @@ uv run python scripts/telemetry_report.py --show
 uv run python scripts/telemetry_report.py --set-key <the key you were given>
 ```
 
+### 2.9 Keeping the two endpoints alive
+
+Both endpoints are free anonymous webhook.site addresses, and those **expire
+seven days after they were last refreshed**. If the recording slips past that,
+the live feed stops arriving. Nothing is lost — every file still lands on this
+machine — but you would find out about trouble later instead of while it is
+happening.
+
+The seven-day limit cannot be extended. It *can* be reset, as often as you like,
+and resetting keeps the **same address**, so refreshing a couple of times a week
+keeps them alive indefinitely with nothing to reconfigure.
+
+```powershell
+uv run python scripts/keepalive.py            # refresh both
+uv run python scripts/keepalive.py --check    # just report, change nothing
+```
+
+Run it before a recording session and after any long gap. It also raises the
+per-endpoint request ceiling, which matters more than it sounds: a two-person run
+sends roughly 130 reports and the default ceiling is 200.
+
+**If `--check` reports an endpoint is dead**, it expired while nobody was
+looking. Tell whoever is leading the work — the address is built into the code
+and has to be replaced there.
+
 ---
 
 ## 3. Record the clips
