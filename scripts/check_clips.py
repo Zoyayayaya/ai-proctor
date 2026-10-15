@@ -45,6 +45,23 @@ SAFE = {"S1", "S2", "S3"}
 # measures roll, not pitch. It is expected to be the weakest scenario.
 EXPECTED_HARD = {"S6"}
 
+# S7's signal IS the phone.
+#
+# The score is 20*[susp>=2] + 40*phone + min(4*duration, 40) - the phone is its
+# own term, not one of the behavioural indicators. S7 exists to exercise that
+# term: the subject holds a phone up without moving their head, so the
+# behavioural indicators are correctly quiet.
+#
+# Judging S7 by the behavioural fraction therefore reports a failure on a clip
+# that is working exactly as designed. It did: the operator's S7 passed its phone
+# line and still showed as weak cheating, and they had to ask whether it was
+# acceptable. Judging it by the phone fraction instead is no better - the phone
+# bar is 30% and this one is 50%, so a good take can pass one and fail the other.
+#
+# S7 gets one verdict, and it is the phone line. Same reasoning as S6: the check
+# should not double-judge a scenario on a signal it was never meant to produce.
+PHONE_SCENARIOS = {"S7"}
+
 FNAME = re.compile(r"^(S[1-8])_p(\d+)_r(\d+)$")
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 
@@ -308,7 +325,8 @@ def main():
         flagfrac = a["flagged"] / a["with_face"] if a["with_face"] else 0
         if scen in SAFE and flagfrac > MAX_SAFE_SUSPICIOUS:
             noisy_safe.append(f"{v.name} ({100*flagfrac:.0f}%)")
-        elif scen not in SAFE and scen not in EXPECTED_HARD:
+        elif scen not in SAFE and scen not in EXPECTED_HARD \
+                and scen not in PHONE_SCENARIOS:
             if flagfrac < MIN_CHEAT_SUSPICIOUS:
                 weak_cheat.append(f"{v.name} ({100*flagfrac:.0f}%)")
 
@@ -345,7 +363,8 @@ def main():
             "; ".join(noisy_safe[:4]))
     verdict(not weak_cheat,
             f"cheating clips flagged in >= {MIN_CHEAT_SUSPICIOUS*100:.0f}% of frames "
-            f"(S6 excluded - expected hard)", "; ".join(weak_cheat[:5]))
+            f"(S6 excluded - expected hard; S7 judged on its phone line)",
+            "; ".join(weak_cheat[:5]))
 
     # Only meaningful when YOLO loaded. Said plainly rather than silently skipped.
     if phone_available:
