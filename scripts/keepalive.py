@@ -125,6 +125,10 @@ def refresh(name: str, url: str, check_only: bool) -> tuple[bool, float | None, 
 
     print(f"  {name}")
     print(f"    url        : {url}")
+    left = remaining(url)
+    if left is not None:
+        warn = "  <- RUNNING OUT, see --rotate" if left <= 10 else ""
+        print(f"    budget     : {left}/{ANON_LIMIT} requests left{warn}")
     if before is None:
         print("    reachable  : NO - could not read the token")
         print("    -> if it has already expired, create a new one and tell the lead;")
@@ -165,12 +169,119 @@ def refresh(name: str, url: str, check_only: bool) -> tuple[bool, float | None, 
     return after > WARN_DAYS, after, new_date
 
 
+ANON_LIMIT = 50
+# webhook.site's anonymous cap: requests per token, for the token's whole life.
+# It does NOT reset, and it is NOT the token's own `request_limit` field - that
+# can read 5000 while the wall still arrives at 50. Reading the field would give
+# a comfortable 4971 remaining on a token that is about to die.
+
+
+def remaining(url: str) -> int | None:
+    """Requests left on this token against the real anonymous cap."""
+    code, d = _request("GET", f"/token/{token_id(url)}/requests?sorting=newest")
+    if code != 200 or not isinstance(d, dict):
+        return None
+    stored = len(d.get("data", []))
+    return max(0, ANON_LIMIT - stored)
+
+
+def new_token() -> str:
+    """Mint a fresh anonymous token. Returns the endpoint URL."""
+    code, d = _request("POST", "/token", {"expiry": WEEK})
+    if code != 201 or not d.get("uuid"):
+        raise RuntimeError(f"could not create a token (HTTP {code})")
+    return f"https://webhook.site/{d['uuid']}"
+
+
+def rotate(channel: str, quiet: bool = False) -> int:
+    """
+    Move a channel to a fresh token, and leave a forwarding note on the old one.
+
+    WHY A NOTE AND NOT JUST A NEW URL
+
+    The endpoints are baked into the source, so the real fix for a dead token is
+    a source change and a push. That only helps an operator who pulls. An agent
+    that is out of sync would keep polling an endpoint that has gone quiet and
+    never learn why.
+
+    A note closes that gap, and it works because of a detail worth writing down:
+    when the 50-request budget runs out, webhook.site refuses POSTs with 429 but
+    still serves GETs. The old endpoint stays readable forever. So a forwarding
+    note posted BEFORE the budget runs out is still there to be found afterwards.
+
+    That is the whole reason this is worth doing rather than theatre: the note
+    outlives the channel's ability to accept anything new.
+    """
+    if channel == "comms":
+        old = comms.endpoint()
+    elif channel == "telemetry":
+        telemetry.load_env_file()
+        old = telemetry.DEFAULT_ENDPOINT
+    else:
+        print(f"  unknown channel {channel!r} - use comms or telemetry")
+        return 2
+
+    left = remaining(old)
+    print(f"  channel    : {channel}")
+    print(f"  current    : {old}")
+    print(f"  budget left: {left if left is not None else 'unknown'}")
+
+    new = new_token()
+    print(f"  new        : {new}")
+    print()
+
+    # The note goes on the OLD endpoint, and only if it can still take it.
+    if left is not None and left <= 0:
+        print("  the old endpoint is already spent - no forwarding note possible.")
+        print("  anyone still polling it will simply see silence. Tell them directly.")
+    else:
+        body = (
+            "THIS CHANNEL HAS MOVED.\n\n"
+            f"The {channel} endpoint is now:\n\n    {new}\n\n"
+            "Why: webhook.site's free tier gives a token 50 requests for its whole\n"
+            "life, and this one has reached it. POSTs are refused from here on, but\n"
+            "reads still work - which is why you are able to see this.\n\n"
+            "What to do: pull the latest source. The endpoint is baked into\n"
+            "scripts/telemetry.py and scripts/comms.py, so a pull is all it takes.\n"
+            "If you would rather not pull, set this in .env instead:\n\n"
+            f"    {'PROCTOR_COMMS_URL' if channel == 'comms' else 'PROCTOR_TELEMETRY_URL'}"
+            f"={new}\n"
+        )
+        if channel == "comms":
+            r = comms.send(body, subject="channel moved - new endpoint",
+                           sender="lead", url=old, quiet=True)
+        else:
+            from telemetry_crypto import encrypt
+            key = telemetry.resolve_key()
+            payload = encrypt({"schema": "proctor.metrics/1", "event": "channel_moved",
+                               "sent_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                               "detail": {"new_endpoint": new, "channel": channel,
+                                          "body": body}}, key)
+            r = telemetry.send(payload, old, "", quiet=True)
+        print(f"  forwarding note posted: {r.get('sent')}")
+
+    print()
+    print("  now update the source and push:")
+    if channel == "comms":
+        print(f'    scripts/comms.py      COMMS_ENDPOINT = "{new}"')
+    else:
+        print(f'    scripts/telemetry.py  DEFAULT_ENDPOINT = "{new}"')
+    print("  then run keepalive.py to refresh it and stamp the expiry date.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true",
                     help="report the expiry of both endpoints without changing anything")
+    ap.add_argument("--rotate", choices=["comms", "telemetry"], default="",
+                    help="move a channel to a fresh token and leave a forwarding "
+                         "note on the old one, for agents that have not pulled")
     args = ap.parse_args()
+
+    if args.rotate:
+        return rotate(args.rotate)
 
     # The effective URLs, so an override in .env is respected rather than ignored.
     telemetry.load_env_file()
