@@ -210,12 +210,12 @@ def _selftest():
             "fig5_temporal_score": FULL_W,
         }
         for p in sorted(figs.glob("*.png")):
-            im = Image.open(p)
-            stem = p.stem
-            w_in = widths.get(stem, FULL_W)
-            ok = "PASS" if im.width / w_in >= 500 else "FAIL"
-            print(f"  {p.name:34} {im.width}x{im.height}px  display {w_in}in "
-                  f"-> {im.width/w_in:.0f} dpi  {ok}")
+            with Image.open(p) as im:
+                stem = p.stem
+                w_in = widths.get(stem, FULL_W)
+                ok = "PASS" if im.width / w_in >= 500 else "FAIL"
+                print(f"  {p.name:34} {im.width}x{im.height}px  display {w_in}in "
+                      f"-> {im.width/w_in:.0f} dpi  {ok}")
     print("  OK (written to a temp dir, nothing left behind)")
 
 
