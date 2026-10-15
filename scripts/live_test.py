@@ -40,7 +40,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rule_score as rs  # noqa: E402
 from rule_score import PHONE_CLASS_ID, PHONE_CONF  # noqa: E402
-from sysutil import camera_failure_report, open_camera, open_writer  # noqa: E402
+from sysutil import (IS_WINDOWS, camera_failure_report, open_camera,  # noqa: E402
+                     open_writer)
 import telemetry  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -314,6 +315,33 @@ def live_test(args):
 
 
 # --------------------------------------------------------------------------
+def beep(kind: str) -> None:
+    """
+    A short tone so the subject knows when the camera is actually recording,
+    without having to watch the screen.
+
+    Rising for the start, falling for the stop - told apart by shape rather than
+    by having to remember which is which. Windows gets a real tone through
+    winsound; anywhere else falls back to the terminal bell, which is what is
+    available there. Never fatal: a machine with no speaker must still record.
+
+    Called immediately before the capture loop and immediately after it, so the
+    tone marks the real recording window and not the countdown.
+    """
+    try:
+        if IS_WINDOWS:
+            import winsound
+            winsound.Beep(1000 if kind == "start" else 500, 150)
+            return
+    except Exception:
+        pass                      # no speaker, or a session that refuses one
+    try:
+        sys.stdout.write("\a")
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+
 def measure_fps(cap, seconds: float = 1.0) -> float:
     """
     How fast is this camera actually delivering frames?
@@ -404,27 +432,33 @@ def record(args):
             print(f"  {instr}")
             print("=" * 72)
             input("  press Enter when ready (Ctrl-C to abort) ... ")
-            for c in (3, 2, 1):
-                print(f"   {c} ...", end="", flush=True)
-                time.sleep(1)
-            print(" RECORDING")
 
             # ------------------------------------------------------------------
+            # Measure and warm up BEFORE the countdown, not after it.
+            #
+            # measure_fps reads and discards frames for about a second. Doing that
+            # between the countdown and the capture would open a silent gap that
+            # the subject performs into - the first second of the take, lost. Here
+            # it also warms the camera up before the countdown even starts.
+            #
             # The writer's fps decides the file's DURATION: duration = frames/fps.
             # Both check_clips.py and extract_features.py read that timeline back
             # out of the file, and extract_features uses it for the `duration`
-            # feature - how long a suspicious state held.
-            #
-            # A webcam asked for 15 fps may deliver 1. Writing 12 frames at a
-            # declared 15 fps turns a 12-second clip into a 0.8-second one: it
-            # fails the >=10s check and the duration feature tops out at 0.8s
-            # instead of 12s. Measure the real rate and write at that.
+            # feature - how long a suspicious state held. A webcam asked for 15
+            # fps may deliver 1, so the rate is measured rather than assumed.
             # ------------------------------------------------------------------
             fps_real = measure_fps(cap)
             vw, _codec = open_writer(path, fps_real, (WIDTH, HEIGHT))
             if vw is None:
                 print(f"  !! could not open a writer for {path}")
                 return 1
+
+            for c in (3, 2, 1):
+                print(f"   {c} ...", end="", flush=True)
+                time.sleep(1)
+            print(" RECORDING")
+            beep("start")            # marks the real start of the take
+
             t0 = time.time()
             written = 0
             while time.time() - t0 < CLIP_SECONDS:
@@ -434,6 +468,7 @@ def record(args):
                 vw.write(frame)
                 written += 1
             vw.release()
+            beep("stop")             # and the real end
             elapsed_s = time.time() - t0
 
             # If the rate moved after the probe, the file's timeline is wrong and

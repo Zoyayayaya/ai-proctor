@@ -830,6 +830,62 @@ def test_writer_fps_decides_the_file_duration(tmp_path):
     assert (n2 / fps_true) >= check_clips.MIN_DURATION_S
 
 
+# --------------------------------------------------------------------------
+# recording: the start/stop tones
+# --------------------------------------------------------------------------
+def test_beep_never_raises():
+    """A machine with no speaker must still be able to record."""
+    import live_test
+
+    for kind in ("start", "stop"):
+        live_test.beep(kind)                 # must not raise
+
+
+def test_beep_uses_a_higher_tone_to_start_and_a_lower_one_to_stop(monkeypatch):
+    """
+    The subject has to tell the two apart without looking at the screen: rising
+    to start, falling to stop. Pinned here because the Windows path cannot be
+    exercised on a Mac.
+    """
+    import sys as _sys
+    import types
+
+    import live_test
+
+    calls = []
+    fake = types.ModuleType("winsound")
+    fake.Beep = lambda freq, ms: calls.append((freq, ms))
+    monkeypatch.setitem(_sys.modules, "winsound", fake)
+    monkeypatch.setattr(live_test, "IS_WINDOWS", True)
+
+    live_test.beep("start")
+    live_test.beep("stop")
+
+    assert len(calls) == 2
+    (f_start, ms_start), (f_stop, ms_stop) = calls
+    assert f_start > f_stop, "start must be the higher tone"
+    assert 0 < ms_start <= 500 and 0 < ms_stop <= 500, "the beeps must be short"
+
+
+def test_beep_falls_back_when_the_speaker_is_refused(monkeypatch):
+    """A refused speaker must not take the recording down with it."""
+    import sys as _sys
+    import types
+
+    import live_test
+
+    fake = types.ModuleType("winsound")
+
+    def boom(freq, ms):
+        raise RuntimeError("no speaker")
+
+    fake.Beep = boom
+    monkeypatch.setitem(_sys.modules, "winsound", fake)
+    monkeypatch.setattr(live_test, "IS_WINDOWS", True)
+
+    live_test.beep("start")                  # must not raise
+
+
 def test_comms_reports_unreadable_messages_instead_of_dropping_them(monkeypatch, capsys):
     """
     A message we cannot decrypt must be reported, not skipped.
