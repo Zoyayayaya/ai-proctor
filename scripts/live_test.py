@@ -324,6 +324,29 @@ def record(args):
     if cap is None:
         camera_failed("live_test.record", CAM_INDEX)
         return 1
+    warm = []
+    for _ in range(5):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        warm.append(float(frame.mean()))
+    if warm and max(warm) < 2.0:
+        print("\n  The camera opened but every frame is pure black.\n")
+        print("  One of these is the cause:")
+        print("  - another app is holding the camera (Teams, Zoom, the Camera")
+        print("    app, or a browser tab with camera permission) - close it;")
+        print("  - the lens cover / privacy shutter is closed - open it;")
+        print("  - the room is too dark - put a lamp in front of the person.")
+        print("  Fix it and run this again - nothing was recorded.\n")
+        telemetry.report_error(
+            "live_test.record",
+            RuntimeError("camera feed is black - likely held by another app"),
+            {"person": args.person,
+             "warmup_mean": round(sum(warm) / len(warm), 2)},
+            session=f"p{args.person}",
+            enabled=not args.no_telemetry)
+        cap.release()
+        return 2
     CLIPS_DIR.mkdir(parents=True, exist_ok=True)
     # codec chosen by sysutil.open_writer with a fallback chain
     todo = []
