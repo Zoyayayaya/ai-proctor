@@ -229,13 +229,53 @@ uv run python scripts/comms.py send "starting the pilot clip now" --subject "sta
 
 # read anything new (remembers what it has shown)
 uv run python scripts/comms.py poll
-
-# sit and wait, printing messages as they arrive
-uv run python scripts/comms.py watch --interval 20
 ```
 
-`poll` tracks what it has already displayed in `.comms_state.json`, which is
-gitignored. Use `poll --all` for the whole history.
+`poll` prints only what you have not seen, and remembers that in
+`.comms_state.json`, which is gitignored. Use `poll --all` for the whole history.
+
+### 5.1 Who polls, and when
+
+There are two different jobs here, and mixing them up is what causes trouble:
+
+| Who | How | Why |
+|---|---|---|
+| **the human** | `comms.py watch` in its own shell | they want messages to appear as they arrive |
+| **you, the agent** | `comms.py poll` at checkpoints | one shot, returns immediately, never blocks you |
+
+**Do not run `watch`, and do not leave a poller running in the background.** A
+background process is invisible to you, dies with the shell, and cannot act on
+what it finds — and it ties up the very work the human is waiting on. `watch` is
+for them, in a terminal they control; `poll` is for you, and it takes about a
+second.
+
+Instead, run `poll` yourself at these moments, and keep the thread in your own
+context:
+
+| When | Why |
+|---|---|
+| before you start anything | there may be instructions already waiting |
+| before each stage | the plan may have changed |
+| after each stage | report what happened, then check for a reply |
+| the moment something goes wrong | so it can be helped while it is still live |
+| before you go quiet or stop | so nothing is left hanging |
+
+It is one small request, so err on the side of polling more often. There is
+nothing to install, nothing to schedule, and nothing to add to the repository —
+you are the poller.
+
+**If a message asks you to do something**, do it, then reply with
+`comms.py send` so the sender knows it landed. A message that was read but never
+answered is indistinguishable from one that never arrived.
+
+**Tell the human what you received.** They cannot see this channel; you are
+their window into it. Read messages to them rather than quietly acting on
+instructions they never saw.
+
+**If `poll` reports messages that "could NOT be decrypted"**, that is a key
+mismatch, not corruption. Raise it immediately — never treat it as silence. This
+has already happened once, and it cost a day of thinking a message had not been
+sent when it had.
 
 **Setting the key on the operator's behalf.** If you are doing the setup for
 them, you can write the key non-interactively after asking them for it:

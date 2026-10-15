@@ -293,12 +293,23 @@ encryption, also built in.
 
 ```powershell
 uv run python scripts/comms.py send "camera moved, re-recording S4" --subject "recording"
-uv run python scripts/comms.py poll          # anything new
-uv run python scripts/comms.py watch         # wait and print as they arrive
+uv run python scripts/comms.py poll          # anything new, then exits
+uv run python scripts/comms.py watch         # sit and print as they arrive
 ```
 
 `poll` remembers what it has shown, so running it repeatedly does not repeat
 itself. `--all` shows the history.
+
+**Two ways to check, and they are for different people:**
+
+- **`watch`** is for **you**, in a terminal you keep open. It sits there and
+  prints messages the moment they land. Stop it with Ctrl-C.
+- **`poll`** is what **your agent** runs, at the points where it matters — before
+  a stage, after a stage, when something breaks. It takes about a second and
+  returns straight away, so it never gets in the way of the work.
+
+Your agent should not run `watch`, and should not leave anything polling in the
+background. If it does, tell it to use `poll` instead.
 
 **If your agent is doing this for you**, it can set the key without any prompt:
 
