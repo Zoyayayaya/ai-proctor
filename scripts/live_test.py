@@ -256,7 +256,8 @@ def live_test(args):
     if frames == 0:
         print("  no frames captured - the camera opened but produced nothing")
         return 1
-    print(f"  frames captured        : {frames}")
+    fps_seen = frames / max(args.seconds, 1e-6)
+    print(f"  frames captured        : {frames}  ({fps_seen:.1f} fps)")
     print(f"  face detected          : {faces} ({100*faces/frames:.0f}%)")
     if scores:
         print(f"  raw score  mean / max  : {np.mean(scores):.1f} / {max(scores)}")
@@ -265,6 +266,17 @@ def live_test(args):
     print("  indicator fire counts  : " +
           (", ".join(f"{k}={v}" for k, v in sorted(indicators.items())) or "none fired"))
     print()
+    # The rate matters twice over: it sets the file's duration when recording
+    # (frames / fps), and extract_features reads that timeline back for the
+    # `duration` feature. A camera quietly running at 1 fps corrupts both, and
+    # nothing downstream can tell. Say it here, before anything is recorded.
+    if fps_seen < 5:
+        print(f"  WARNING: the camera is delivering {fps_seen:.1f} frames per second.")
+        print("  A webcam normally manages 15 to 30. This is almost always low light -")
+        print("  cameras lengthen their exposure in the dark and the rate collapses.")
+        print("  Add a lamp in front of you, or move somewhere brighter, and run this")
+        print("  again. Do NOT start recording until this number is well above 1.")
+        print()
     if faces / frames < 0.5:
         print("  WARNING: a face was found in under half the frames.")
         print("  Sit closer, raise the lighting, and centre yourself in the frame.")
