@@ -55,8 +55,8 @@ STATE_FILE = ROOT / ".comms_state.json"
 
 # Second endpoint, dedicated to messages. Override with PROCTOR_COMMS_URL.
 ENV_COMMS = "PROCTOR_COMMS_URL"
-COMMS_ENDPOINT = "https://webhook.site/fb1740fb-8a80-4b68-952e-97df91c328d7"
-COMMS_EXPIRES = "2026-10-22"
+COMMS_ENDPOINT = "https://webhook.site/8a110521-33a0-4f7a-83d2-50212a9bb089"
+COMMS_EXPIRES = "2026-10-23"
 
 SCHEMA = "proctor.comms/1"
 TIMEOUT = 15.0
