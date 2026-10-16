@@ -386,11 +386,40 @@ def main():
     print("  measure, so S6 is expected to score low. That is a real finding to")
     print("  report, not a recording fault - do not re-record it for that reason.")
 
-    ok = not any([bad_names, missing, low_res, short, low_face])
+    # Blocking vs advisory.
+    #
+    # The hard checks are objective: a misnamed file, a missing clip, the wrong
+    # resolution, too short, no face. Those make a clip unusable and there is
+    # nothing to interpret.
+    #
+    # The behavioural checks are different in kind. A cheating clip that does not
+    # look suspicious could mean the subject did not perform the behaviour - or it
+    # could mean the system cannot see a behaviour that WAS performed, which is a
+    # finding rather than a fault. A fraction alone cannot tell those apart, so
+    # they are reported as observations instead of being made into a gate. That is
+    # also why S6 and S7 are excluded from them.
+    #
+    # What this must not do is print FAIL on four lines and PASS at the bottom,
+    # which is what it used to do. It cost real time: the operator read the PASS,
+    # correctly, because that is what the tool said - and was then told by us that
+    # the gate would fail on those same clips. Both readings were defensible and
+    # neither was clear, and the tool caused that.
+    blocking = [bad_names, missing, low_res, short, low_face]
+    advisory = [noisy_safe, weak_cheat, weak_phone, spurious_phone]
+    ok = not any(blocking)
+
+    n_advisory = sum(1 for a in advisory if a)
     print()
     print("=" * 104)
-    print("RESULT:", "PASS - the clips are ready to process" if ok
-          else "FAIL - fix the items marked above, then re-run this check")
+    print("RESULT:", "READY - the clips can be processed" if ok
+          else "NOT READY - fix the blocking items above")
+    if ok and n_advisory:
+        print(f"        with {n_advisory} behavioural observation(s) listed above.")
+        print("        Those are not faults on their own. A clip that does not look")
+        print("        the way its label says is either a bad take or a limit of the")
+        print("        system, and the fraction cannot tell you which - so look at")
+        print("        them, decide, and say which you think each one is. They are")
+        print("        worth reporting either way.")
     print("=" * 104)
 
     # Report the verdict. A FAIL matters more than a PASS here: it means
