@@ -1089,3 +1089,55 @@ def test_comms_reports_unreadable_messages_instead_of_dropping_them(monkeypatch,
     out = capsys.readouterr().out
     assert "could NOT be decrypted" in out                  # the other is announced
     assert "key mismatch" in out
+
+
+# --------------------------------------------------------------------------
+# figure generation
+# --------------------------------------------------------------------------
+def test_figure_scenario_default_matches_the_recorder():
+    """
+    make_result_figures.py plots Fig. 5 from a scenario, and both its --scenario
+    default and its help text named that scenario. Both were stale.
+
+    The scenario table grew from seven codes to eight when S5 "Head roll" was
+    inserted, so everything below it shifted down by one: S6 used to be "Phone
+    visible" and became "Look down at notes". The figure generator kept the old
+    default (S6) and the old help text ("default S6, phone visible"), so Fig. 5
+    was plotted from a behaviour that cannot fire the phone indicator at all.
+
+    Measured on the real dataset, the two scenarios are not close:
+
+        S6  look down at notes   mean smoothed score  0.05   max 20   phone 0.0%
+        S7  phone visible        mean smoothed score 31.58   max 88   phone 62.8%
+
+    So the figure was a flat line at zero, under a caption promising a sustained
+    suspicious event and body text promising that "the score responds to
+    persistence". The figure showed the opposite, and nothing in the pipeline
+    could tell - the same failure mode as the S1-S7/S1-S8 extractor mismatch,
+    which is the test above this one.
+    """
+    import re
+    import live_test as lt
+
+    src = (ROOT / "scripts" / "make_result_figures.py").read_text()
+
+    # which code does the recorder call the phone scenario?
+    phone = [c for c, (name, _l, _i) in lt.SCENARIOS.items() if "phone" in name.lower()]
+    assert len(phone) == 1, f"expected exactly one phone scenario, found {phone}"
+    phone = phone[0]
+
+    m = re.search(r'"--scenario",\s*default="(S\d+)"', src)
+    assert m, "could not find the --scenario default in make_result_figures.py"
+    assert m.group(1) == phone, (
+        f"make_result_figures.py defaults --scenario to {m.group(1)}, but the "
+        f"phone scenario is {phone} ({lt.SCENARIOS[phone][0]!r}). Fig. 5 would be "
+        f"plotted from the wrong behaviour.")
+
+    # and the help text must name the same scenario, not the one that used to be it
+    h = re.search(r'help="scenario to plot for Fig\. 5 \(default (S\d+), ([^"]+)\)"', src)
+    assert h, "could not find the --scenario help text"
+    assert h.group(1) == phone, (
+        f"help text says default {h.group(1)} but the default is {phone}")
+    assert h.group(2).lower() == lt.SCENARIOS[phone][0].lower(), (
+        f"help text describes the scenario as {h.group(2)!r} but the recorder "
+        f"calls {phone} {lt.SCENARIOS[phone][0]!r}")

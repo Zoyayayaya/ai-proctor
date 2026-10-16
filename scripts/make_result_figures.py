@@ -225,8 +225,8 @@ def main():
     ap.add_argument("--results", default="data/results.json")
     ap.add_argument("--data", default="data/dataset_labelled.csv")
     ap.add_argument("--out", default=OUT_DEFAULT)
-    ap.add_argument("--scenario", default="S6",
-                    help="scenario to plot for Fig. 5 (default S6, phone visible)")
+    ap.add_argument("--scenario", default="S7",
+                    help="scenario to plot for Fig. 5 (default S7, phone visible)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
