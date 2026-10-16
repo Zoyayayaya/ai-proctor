@@ -40,14 +40,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rule_score as rs  # noqa: E402
 
 # Scenario -> label. The scenario is prescribed behaviour, so this is ground truth.
+# The scenario table. It must match live_test.SCENARIOS and RECORDING_SPEC.md.
+#
+# It did not. This table covered S1-S7, with names that were off by one from S5
+# onward - S5 was labelled "look down" where the spec says "head roll", S6
+# "phone" where the spec says "look down", S7 "out of frame" where the spec says
+# "phone" - and S8 was absent entirely.
+#
+# With the S[1-7] filename regex below, that meant every S8 clip was SILENTLY
+# SKIPPED: six clips of a 48-clip set, dropped without a word, and the run
+# reported success. The operator caught it by noticing the extractor processing
+# 42 clips and skipping the S8 list.
+#
+# The binary labels happened to be right, because the safe/cheating split is the
+# same in both tables. So nothing downstream could tell, and no result would have
+# looked wrong. Only the names were wrong, and only the missing clips were lost -
+# which is the worst kind of bug, because the numbers still add up.
+#
+# test_scenario_tables_agree_with_the_recorder pins this now, so the three
+# copies cannot drift apart again without a test going red.
 SCENARIO_LABELS = {
     "S1": 0,  # focused on screen
-    "S2": 0,  # normal fidgeting
+    "S2": 0,  # fidgeting
     "S3": 0,  # reading / nodding
-    "S4": 1,  # sustained look away
-    "S5": 1,  # sustained look down
-    "S6": 1,  # phone visible
-    "S7": 1,  # out of frame
+    "S4": 1,  # look away
+    "S5": 1,  # head roll
+    "S6": 1,  # look down at notes
+    "S7": 1,  # phone visible
+    "S8": 1,  # lean / leave frame
 }
 
 import telemetry  # noqa: E402
@@ -55,7 +75,7 @@ from rule_score import (PHONE_CLASS_ID, PHONE_CONF,  # noqa: E402
                         SHOULDER_LANDMARK_ERROR, SHOULDER_LEVEL_MAX_DIFF,
                         SHOULDER_WINDOW)
 
-FNAME = re.compile(r"^(S[1-7])_p(\d+)_r(\d+)$")
+FNAME = re.compile(r"^(S[1-8])_p(\d+)_r(\d+)$")
 
 
 def parse_name(stem: str):

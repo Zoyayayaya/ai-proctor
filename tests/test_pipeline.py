@@ -92,7 +92,7 @@ def test_labels_come_from_scenario_not_from_score():
     import re
     import extract_features as ef
     safe = {"S1", "S2", "S3"}
-    cheat = {"S4", "S5", "S6", "S7"}
+    cheat = {"S4", "S5", "S6", "S7", "S8"}
     assert set(ef.SCENARIO_LABELS) == safe | cheat
     for s in safe:
         assert ef.SCENARIO_LABELS[s] == 0
@@ -109,6 +109,61 @@ def test_labels_come_from_scenario_not_from_score():
     assert "smoothed_score" not in code, "label must not be derived from the score"
     # and the label really is taken from the scenario map
     assert re.search(r"label\s*=\s*SCENARIO_LABELS\[scen\]", code)
+
+
+def test_scenario_tables_agree_with_the_recorder():
+    """
+    Three places define the scenarios: live_test.SCENARIOS (the recorder),
+    RECORDING_SPEC.md (what a human reads), and extract_features.SCENARIO_LABELS
+    (the labels). Two of them had drifted.
+
+    The extractor's table covered S1-S7 with names off by one from S5 onward, and
+    S8 was absent - which, together with its S[1-7] filename pattern, meant every
+    S8 clip was SILENTLY SKIPPED. Six clips of a 48-clip set, dropped without a
+    word, and the run reported success. Nothing downstream could tell, because the
+    safe/cheating split happened to be the same in both tables, so the numbers
+    still added up.
+
+    The operator found it by noticing the extractor processing 42 clips and
+    skipping the S8 list. This is the test that would have caught it first.
+    """
+    import extract_features as ef
+    import live_test as lt
+
+    assert set(ef.SCENARIO_LABELS) == set(lt.SCENARIOS), (
+        f"scenario codes differ - extractor has {sorted(ef.SCENARIO_LABELS)}, "
+        f"recorder has {sorted(lt.SCENARIOS)}")
+
+    for code, (name, label, _instr) in lt.SCENARIOS.items():
+        assert ef.SCENARIO_LABELS[code] == label, (
+            f"{code} ({name}): recorder says label={label}, "
+            f"extractor says {ef.SCENARIO_LABELS[code]}")
+
+    # the filename pattern must accept every code the recorder can produce, or
+    # clips are dropped at the door without a message
+    for code in lt.SCENARIOS:
+        assert ef.parse_name(f"{code}_p1_r1") == (code, 1, 1), (
+            f"{code} is produced by the recorder but rejected by the extractor's "
+            f"filename pattern")
+
+
+def test_recording_spec_matches_the_recorder():
+    """
+    The spec is what a person reads before recording. A name that disagrees with
+    the recorder is a person being told to perform one behaviour while the code
+    expects another.
+    """
+    import re
+    import live_test as lt
+
+    spec = (ROOT / "RECORDING_SPEC.md").read_text()
+    for code, (name, _label, _instr) in lt.SCENARIOS.items():
+        row = re.search(rf"\|\s*\*\*{code}\*\*\s*\|\s*([^|]+?)\s*\|", spec)
+        assert row, f"{code} is missing from RECORDING_SPEC.md"
+        spec_name = row.group(1).strip().lower()
+        head = spec_name.split("/")[0].strip()
+        assert head and head in name.lower(), (
+            f"{code}: RECORDING_SPEC says {spec_name!r}, recorder says {name!r}")
 
 
 # --------------------------------------------------------------------------

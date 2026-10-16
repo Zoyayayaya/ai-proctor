@@ -248,7 +248,7 @@ def evaluate(df: pd.DataFrame) -> dict:
 def make_synthetic(n_sessions: int = 3, n_clips_per_session: int = 12, seed: int = 0):
     rng = np.random.default_rng(seed)
     rows = []
-    scenarios = {0: ["S1", "S2", "S3"], 1: ["S4", "S5", "S6", "S7"]}
+    scenarios = {0: ["S1", "S2", "S3"], 1: ["S4", "S5", "S6", "S7", "S8"]}
     for s in range(1, n_sessions + 1):
         for c in range(n_clips_per_session):
             label = int(c % 2 == 1)
