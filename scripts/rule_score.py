@@ -18,6 +18,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 EYE_LEFT_THRESHOLD = 0.3
 EYE_RIGHT_THRESHOLD = 0.7
+# exam.py declares EYE_LEFT/RIGHT_THRESHOLD but does NOT use them for the
+# indicator - the check it actually runs is abs(eye_ratio - 0.5) > 0.25, i.e.
+# outside 0.25-0.75. The named constants only appear in a report line. That
+# quirk is carried over deliberately, because the port has to match exam.py
+# rather than improve on it. Named here so callers stop hard-coding the number:
+# check_clips.py had its own copy of 0.25, which is exactly the drift this file
+# exists to prevent.
+EYE_OFF_CENTRE = 0.25
 HEAD_TILT_THRESHOLD = 10
 TABLE_REGION_THRESHOLD = 0.7
 SHOULDER_TILT_THRESHOLD = 0.3
@@ -70,7 +78,7 @@ def suspicious_indicators(eye_ratio: float, head_tilt: float, body_tilt: int,
     """How many of the four behavioural indicators fire for one frame."""
     n = 0
     # Ignore tiny eye jitter: only a genuine offset from centre counts
-    if abs(eye_ratio - 0.5) > 0.25:
+    if abs(eye_ratio - 0.5) > EYE_OFF_CENTRE:
         n += 1
     if head_tilt > HEAD_TILT_THRESHOLD:
         n += 1

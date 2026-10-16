@@ -189,7 +189,7 @@ def analyse(path: Path, stride: int, phone_model=None):
         # pose is not run here: the checker is about framing and naming, and
         # running BlazePose as well would triple the runtime for little benefit
         susp = rs.suspicious_indicators(eye_ratio, head_tilt, 0, looking_up)
-        if abs(eye_ratio - 0.5) > 0.25:
+        if abs(eye_ratio - 0.5) > rs.EYE_OFF_CENTRE:
             fires["eye_ratio"] += 1
         if head_tilt > rs.HEAD_TILT_THRESHOLD:
             fires["head_tilt"] += 1
