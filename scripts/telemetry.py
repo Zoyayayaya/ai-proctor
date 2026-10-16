@@ -95,7 +95,7 @@ ENV_KEY = "PROCTOR_TELEMETRY_KEY"
 # thing with --no-telemetry.
 # ---------------------------------------------------------------------------
 DEFAULT_ENDPOINT = "https://webhook.site/77dd8c92-4f90-47ed-bc92-ce541a0659ee"
-DEFAULT_ENDPOINT_EXPIRES = "2026-10-22"
+DEFAULT_ENDPOINT_EXPIRES = "2026-10-23"
 
 # ---------------------------------------------------------------------------
 # THE 50-REQUEST WALL - read this before adding a telemetry call

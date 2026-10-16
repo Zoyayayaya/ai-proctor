@@ -21,6 +21,10 @@ data/media/
 
 # comms polling state - local bookkeeping, never shared
 .comms_state.json
+# local-only utility: nudges the lead's herdr pane, which the operator's machine
+# does not have. Must not travel with the repo.
+scripts/watch_channels.py
+.watch_state.json
 
 # belt and braces: ignore any recorded media anywhere in the tree, so a clip
 # saved to the wrong path still cannot be committed
